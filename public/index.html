@@ -1,1 +1,21 @@
-<!doctype html><title>Voice Agent</title>
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="utf-8" />
+    <title>Voice Agent</title>
+    <style>
+      body { font-family: sans-serif; max-width: 480px; margin: 40px auto; }
+      #status { font-weight: bold; }
+      #transcript { margin-top: 16px; border-top: 1px solid #ccc; padding-top: 8px; }
+      button { font-size: 16px; padding: 8px 16px; margin-right: 8px; }
+    </style>
+  </head>
+  <body>
+    <h1>Voice Agent</h1>
+    <p>Trạng thái: <span id="status">idle</span></p>
+    <button id="startButton">Bắt đầu gọi</button>
+    <button id="endButton">Kết thúc</button>
+    <div id="transcript"></div>
+    <script src="client.js"></script>
+  </body>
+</html>
