@@ -58,3 +58,28 @@ test('absorbs back-to-back punctuation into single chunk', () => {
   // Should produce one chunk, not separate ['Hello?', '!']
   assert.deepEqual(flushed, ['Hello?!']);
 });
+
+test('absorbs back-to-back punctuation followed by trailing text into a single chunk', () => {
+  const flushed = [];
+  const chunker = createTextChunker({ onFlush: (c) => flushed.push(c) });
+  chunker.push('Hello?! Bạn khỏe không?');
+  // "?!" should stay merged (not split into 'Hello?' and '!'), and the following
+  // sentence should flush separately at its own trailing '?'.
+  assert.deepEqual(flushed, ['Hello?!', 'Bạn khỏe không?']);
+});
+
+test('does not split a decimal number at the punctuation boundary', () => {
+  const flushed = [];
+  const chunker = createTextChunker({ onFlush: (c) => flushed.push(c) });
+  chunker.push('Giá khoảng 8.5 triệu đồng.');
+  // The '.' inside "8.5" is followed by a digit, not whitespace, so it must not
+  // be treated as a sentence boundary; only the trailing '.' should flush.
+  assert.deepEqual(flushed, ['Giá khoảng 8.5 triệu đồng.']);
+});
+
+test('does not split a decimal number even when more punctuation-bearing text follows', () => {
+  const flushed = [];
+  const chunker = createTextChunker({ onFlush: (c) => flushed.push(c) });
+  chunker.push('Giá 8.5 triệu, đã bao gồm thuế.');
+  assert.deepEqual(flushed, ['Giá 8.5 triệu,', 'đã bao gồm thuế.']);
+});

@@ -4,6 +4,7 @@ require('dotenv').config();
 const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
+const crypto = require('node:crypto');
 const { WebSocketServer } = require('ws');
 const OpenAI = require('openai');
 
@@ -50,6 +51,9 @@ function main() {
   const wss = new WebSocketServer({ server, path: '/ws' });
 
   wss.on('connection', (browserWs) => {
+    // Short id to correlate one call's log lines in a multi-call server log.
+    const sessionId = crypto.randomUUID().slice(0, 8);
+
     const sttClient = createRealtimeSttClient({
       apiKey: config.openaiApiKey,
       model: config.openaiRealtimeModel,
@@ -67,6 +71,7 @@ function main() {
       sttClient,
       llmClient,
       ttsClient,
+      sessionId,
       sendControl: (msg) => {
         if (browserWs.readyState === browserWs.OPEN) browserWs.send(JSON.stringify(msg));
       },
@@ -75,8 +80,10 @@ function main() {
       },
     });
 
+    console.log(`[${sessionId}] [server] new call connected`);
+
     orchestrator.start().catch((err) => {
-      console.error('[server] failed to start session', err);
+      console.error(`[${sessionId}] [server] failed to start session`, err);
       browserWs.send(JSON.stringify({ type: 'error', message: 'Không thể kết nối tới dịch vụ giọng nói.' }));
       browserWs.close();
     });
@@ -88,11 +95,12 @@ function main() {
     });
 
     browserWs.on('close', () => {
+      console.log(`[${sessionId}] [server] call ended`);
       orchestrator.stop();
     });
 
     browserWs.on('error', (err) => {
-      console.error('[server] browser websocket error', err);
+      console.error(`[${sessionId}] [server] browser websocket error`, err);
     });
   });
 

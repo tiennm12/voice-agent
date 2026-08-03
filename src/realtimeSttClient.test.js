@@ -137,6 +137,59 @@ test('sendAudioChunk before the socket is open is a safe no-op', async () => {
   await connectPromise;
 });
 
+test('emits disconnected when the socket closes unexpectedly', async () => {
+  const fakeWs = new FakeWs();
+  const client = createRealtimeSttClient({
+    apiKey: 'sk-test',
+    model: 'gpt-realtime-2.1',
+    transcribeModel: 'gpt-4o-transcribe',
+    createWebSocket: () => {
+      queueMicrotask(() => {
+        fakeWs.readyState = FakeWs.OPEN;
+        fakeWs.emit('open');
+      });
+      return fakeWs;
+    },
+  });
+  await client.connect();
+
+  let disconnected = false;
+  client.on('disconnected', () => {
+    disconnected = true;
+  });
+
+  fakeWs.emit('close');
+
+  assert.equal(disconnected, true);
+});
+
+test('close() does not emit disconnected (deliberate shutdown, not a drop)', async () => {
+  const fakeWs = new FakeWs();
+  const client = createRealtimeSttClient({
+    apiKey: 'sk-test',
+    model: 'gpt-realtime-2.1',
+    transcribeModel: 'gpt-4o-transcribe',
+    createWebSocket: () => {
+      queueMicrotask(() => {
+        fakeWs.readyState = FakeWs.OPEN;
+        fakeWs.emit('open');
+      });
+      return fakeWs;
+    },
+  });
+  await client.connect();
+
+  let disconnected = false;
+  client.on('disconnected', () => {
+    disconnected = true;
+  });
+
+  client.close();
+  fakeWs.emit('close'); // real ws would emit this after close() tears the socket down
+
+  assert.equal(disconnected, false);
+});
+
 test('close() closes the underlying socket', async () => {
   const fakeWs = new FakeWs();
   const client = createRealtimeSttClient({

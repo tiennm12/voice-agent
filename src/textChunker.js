@@ -1,4 +1,8 @@
-const PUNCTUATION = /[.!?;:,]/;
+// Punctuation only counts as a sentence/clause boundary when followed by whitespace
+// or the end of the currently-buffered text (more text may still arrive via push()).
+// This keeps decimals/times like "8.5" or "12:30" from being split mid-number, since
+// the punctuation there is immediately followed by a digit, not whitespace/end.
+const PUNCTUATION = /[.!?;:,](?=\s|$)/;
 
 function wordCount(text) {
   const trimmed = text.trim();

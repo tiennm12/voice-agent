@@ -106,3 +106,74 @@ test('abort() closes the socket immediately', async () => {
   client.abort();
   assert.equal(fakeWs.closed, true);
 });
+
+test('emits disconnected when the socket closes unexpectedly mid-turn', async () => {
+  const fakeWs = new FakeWs();
+  const client = createTtsClient({
+    apiKey: 'xi-test',
+    voiceId: 'voice123',
+    modelId: 'eleven_flash_v2_5',
+    createWebSocket: () => {
+      queueMicrotask(() => fakeWs.emit('open'));
+      return fakeWs;
+    },
+  });
+  await client.connect();
+
+  let disconnected = false;
+  client.on('disconnected', () => {
+    disconnected = true;
+  });
+
+  fakeWs.emit('close'); // no isFinal message and no abort() first -> unexpected
+
+  assert.equal(disconnected, true);
+});
+
+test('a normal end-of-turn close (isFinal then server closes) does not emit disconnected', async () => {
+  const fakeWs = new FakeWs();
+  const client = createTtsClient({
+    apiKey: 'xi-test',
+    voiceId: 'voice123',
+    modelId: 'eleven_flash_v2_5',
+    createWebSocket: () => {
+      queueMicrotask(() => fakeWs.emit('open'));
+      return fakeWs;
+    },
+  });
+  await client.connect();
+
+  let disconnected = false;
+  client.on('disconnected', () => {
+    disconnected = true;
+  });
+
+  fakeWs.emit('message', Buffer.from(JSON.stringify({ isFinal: true })));
+  fakeWs.emit('close'); // server closes the socket after the final message, as expected
+
+  assert.equal(disconnected, false);
+});
+
+test('abort() does not emit disconnected (deliberate shutdown, not a drop)', async () => {
+  const fakeWs = new FakeWs();
+  const client = createTtsClient({
+    apiKey: 'xi-test',
+    voiceId: 'voice123',
+    modelId: 'eleven_flash_v2_5',
+    createWebSocket: () => {
+      queueMicrotask(() => fakeWs.emit('open'));
+      return fakeWs;
+    },
+  });
+  await client.connect();
+
+  let disconnected = false;
+  client.on('disconnected', () => {
+    disconnected = true;
+  });
+
+  client.abort();
+  fakeWs.emit('close'); // real ws would emit this after abort() tears the socket down
+
+  assert.equal(disconnected, false);
+});
