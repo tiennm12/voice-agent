@@ -41,3 +41,20 @@ test('end() does not flush an empty or whitespace-only buffer', () => {
   chunker.end();
   assert.deepEqual(flushed, []);
 });
+
+test('does not hang when maxWordsBeforeFlush is 0 (regression)', () => {
+  const flushed = [];
+  const chunker = createTextChunker({ onFlush: (c) => flushed.push(c), maxWordsBeforeFlush: 0 });
+  chunker.push('một hai ba');
+  // Should flush word-by-word (as if maxWordsBeforeFlush were 1, clamped from 0)
+  // This test verifies no infinite loop occurs; exact flushing depends on clamping behavior
+  assert.deepEqual(flushed, ['một', 'hai']);
+});
+
+test('absorbs back-to-back punctuation into single chunk', () => {
+  const flushed = [];
+  const chunker = createTextChunker({ onFlush: (c) => flushed.push(c) });
+  chunker.push('Hello?!');
+  // Should produce one chunk, not separate ['Hello?', '!']
+  assert.deepEqual(flushed, ['Hello?!']);
+});
