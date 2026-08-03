@@ -1,0 +1,17 @@
+{
+  "name": "voice-agent",
+  "version": "0.1.0",
+  "private": true,
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node --test src"
+  },
+  "dependencies": {
+    "ws": "^8.18.0",
+    "openai": "^4.68.0",
+    "dotenv": "^16.4.5"
+  }
+}
