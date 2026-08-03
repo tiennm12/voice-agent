@@ -51,6 +51,12 @@ function createRealtimeSttClient({ apiKey, model, transcribeModel, createWebSock
       });
 
       socket.on('message', (data) => {
+        if (socket !== ws) {
+          // Stale message from a socket a later connect() already superseded —
+          // see the 'close' handler below for why this must not touch shared
+          // state (expectClose) or emit events attributed to the current connection.
+          return;
+        }
         let event;
         try {
           event = JSON.parse(data.toString());
@@ -68,6 +74,9 @@ function createRealtimeSttClient({ apiKey, model, transcribeModel, createWebSock
       });
 
       socket.on('error', (err) => {
+        if (socket !== ws) {
+          return;
+        }
         emitter.emit('error', err);
         reject(err);
       });
