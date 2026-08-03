@@ -63,7 +63,15 @@ function createSessionOrchestrator({
     // bar is: log it, tell the browser, and don't leave the session in a state that
     // looks alive but can never make progress again. CALL_ENDED is special-cased in
     // sessionState to always succeed and land on 'idle', so this never throws.
+    //
+    // Abandon any in-flight turn first: without this, a still-running turn keeps
+    // passing isCurrentTurn() after we've already declared the call over, so a
+    // queued chunk flushing later would try state.transition('TTS_STARTED') from
+    // 'idle' (throws — the exact raw-error-leak fix #2 was meant to stop, re-entering
+    // through here), or the agent could end up speaking on a call already ended.
     console.error(`${logPrefix} sttClient disconnected unexpectedly`);
+    abandonCurrentTurn();
+    ttsClient.abort();
     sendControl({ type: 'error', message: 'Mất kết nối dịch vụ nhận diện giọng nói.' });
     if (state.current !== 'idle') {
       state.transition('CALL_ENDED');
@@ -86,10 +94,17 @@ function createSessionOrchestrator({
   });
 
   ttsClient.on('disconnected', () => {
-    // Upstream ElevenLabs WS dropped unexpectedly mid-turn.
+    // Upstream ElevenLabs WS dropped unexpectedly mid-turn — this can happen either
+    // after the first chunk went out (state 'speaking') or after connect() resolved
+    // but before anything was flushed yet (state still 'thinking'). Recovering only
+    // from 'speaking' left the 'thinking' case wedged forever: the turn would carry
+    // on, write into the dead socket (silent no-op), turnComplete would never arrive,
+    // and every subsequent transcriptFinal would be dropped by the
+    // state.current !== 'listening' guard with no way back short of a reload.
     console.error(`${logPrefix} ttsClient disconnected unexpectedly`);
+    abandonCurrentTurn();
     sendControl({ type: 'error', message: 'Mất kết nối dịch vụ giọng nói.' });
-    if (state.current === 'speaking') {
+    if (state.current === 'speaking' || state.current === 'thinking') {
       state.transition('USER_INTERRUPTED');
       sendControl({ type: 'state', state: 'listening' });
     }

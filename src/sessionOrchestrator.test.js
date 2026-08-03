@@ -463,3 +463,74 @@ test('fix #1: ttsClient disconnected while speaking sends an error and returns t
   assert.ok(controlMessages.some((m) => m.type === 'error' && m.message === 'Mất kết nối dịch vụ giọng nói.'));
   assert.ok(controlMessages.filter((m) => m.type === 'state' && m.state === 'listening').length >= 1);
 });
+
+test('fix #1 (round 2): sttClient disconnected during an active turn abandons the turn instead of leaving it to crash/speak later', async () => {
+  const sttClient = makeFakeSttClient();
+  const ttsClient = makeDeferredConnectTtsClient(); // TTS connect stays pending; a chunk gets queued
+  const abortCalls = [];
+  const llmClient = {
+    streamCompletion: (messages, callbacks) => {
+      callbacks.onToken('Xin chào.'); // flush -> queued, since TTS isn't ready yet
+      return { abort: () => abortCalls.push(true) };
+    },
+  };
+
+  const controlMessages = [];
+  const orchestrator = createSessionOrchestrator({
+    systemPrompt: 'SYS',
+    sttClient,
+    llmClient,
+    ttsClient,
+    sendControl: (msg) => controlMessages.push(msg),
+    sendAudio: () => {},
+  });
+
+  await orchestrator.start();
+  sttClient.emitTranscriptFinal('Kể chuyện đi'); // state -> thinking; chunk queued; TTS connect pending
+
+  assert.doesNotThrow(() => sttClient.emitDisconnected());
+
+  assert.equal(abortCalls.length, 1, 'the in-flight LLM call must be aborted');
+  assert.equal(ttsClient.calls.abort, 1, 'the TTS turn must be aborted too, not left dangling');
+  assert.ok(
+    controlMessages.some((m) => m.type === 'error' && m.message === 'Mất kết nối dịch vụ nhận diện giọng nói.'),
+  );
+
+  // The now-irrelevant deferred TTS connect resolving afterward must be a no-op —
+  // not a crash (state.transition('TTS_STARTED') from 'idle') and not the agent
+  // speaking on a call that's already been declared over.
+  assert.doesNotThrow(() => ttsClient.resolveConnect());
+  await new Promise((r) => setImmediate(r));
+
+  assert.equal(ttsClient.calls.sendText.length, 0);
+});
+
+test('fix #2 (round 2): ttsClient disconnected while still "thinking" (before any chunk flushed) recovers to listening instead of wedging forever', async () => {
+  const sttClient = makeFakeSttClient();
+  const ttsClient = makeFakeTtsClient(); // connect() resolves promptly
+  const llmClient = makeFakeLlmClient(() => {}); // no tokens yet -> state stays 'thinking'
+
+  const controlMessages = [];
+  const orchestrator = createSessionOrchestrator({
+    systemPrompt: 'SYS',
+    sttClient,
+    llmClient,
+    ttsClient,
+    sendControl: (msg) => controlMessages.push(msg),
+    sendAudio: () => {},
+  });
+
+  await orchestrator.start();
+  sttClient.emitTranscriptFinal('Chào bạn');
+  await new Promise((r) => setImmediate(r)); // let ttsClient.connect() resolve; still 'thinking'
+
+  assert.doesNotThrow(() => ttsClient.emitDisconnected());
+
+  assert.ok(controlMessages.some((m) => m.type === 'error' && m.message === 'Mất kết nối dịch vụ giọng nói.'));
+  assert.ok(controlMessages.some((m) => m.type === 'state' && m.state === 'listening'));
+
+  // Session must be recoverable, not wedged in 'speaking'/'thinking' forever.
+  assert.doesNotThrow(() => sttClient.emitTranscriptFinal('thử lại'));
+  const transcriptMessages = controlMessages.filter((m) => m.type === 'transcript');
+  assert.ok(transcriptMessages.some((m) => m.text === 'thử lại'), 'the next turn must actually start, proving the session is not wedged');
+});

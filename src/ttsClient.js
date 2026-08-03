@@ -17,17 +17,23 @@ function createTtsClient({ apiKey, voiceId, modelId, createWebSocket = defaultCr
     expectClose = false;
     return new Promise((resolve, reject) => {
       const url = `wss://api.elevenlabs.io/v1/text-to-speech/${voiceId}/stream-input?model_id=${modelId}&output_format=mp3_44100_128`;
-      ws = createWebSocket(url, { headers: { 'xi-api-key': apiKey } });
+      // Capture this connection's socket locally. `ws` (the shared/outward-facing
+      // reference) gets reassigned on every connect() call (once per turn), so a
+      // handler that closed over `ws` instead of this local `socket` could fire for
+      // an orphaned previous-turn socket after a new turn's connect() has already
+      // reassigned `ws` — see the 'close' handler below.
+      const socket = createWebSocket(url, { headers: { 'xi-api-key': apiKey } });
+      ws = socket;
 
-      ws.on('open', () => {
-        ws.send(JSON.stringify({
+      socket.on('open', () => {
+        socket.send(JSON.stringify({
           text: ' ',
           voice_settings: { stability: 0.5, similarity_boost: 0.75 },
         }));
         resolve();
       });
 
-      ws.on('message', (data) => {
+      socket.on('message', (data) => {
         let event;
         try {
           event = JSON.parse(data.toString());
@@ -44,12 +50,21 @@ function createTtsClient({ apiKey, voiceId, modelId, createWebSocket = defaultCr
         }
       });
 
-      ws.on('error', (err) => {
+      socket.on('error', (err) => {
         emitter.emit('error', err);
         reject(err);
       });
 
-      ws.on('close', () => {
+      socket.on('close', () => {
+        if (socket !== ws) {
+          // This socket has already been superseded by a later connect() call (e.g.
+          // the next turn started before this one's server-initiated close arrived).
+          // It's neither an "expected" nor "unexpected" close for the *current*
+          // connection — the shared `expectClose` flag belongs to `ws`, not to this
+          // stale socket, so touching it here would either false-alarm on the live
+          // connection or wrongly mark a future real drop as already-expected.
+          return;
+        }
         // ws.send() on a closed socket is a silent no-op, so without this a mid-turn
         // drop goes completely unnoticed. Only surface it when neither we nor the
         // server already wound the turn down normally.

@@ -17,12 +17,18 @@ function createRealtimeSttClient({ apiKey, model, transcribeModel, createWebSock
   function connect() {
     expectClose = false;
     return new Promise((resolve, reject) => {
-      ws = createWebSocket(`wss://api.openai.com/v1/realtime?model=${model}`, {
+      // Capture this connection's socket locally. `ws` (the shared/outward-facing
+      // reference) would get reassigned by a subsequent connect() call, so a handler
+      // that closed over `ws` instead of this local `socket` could fire for an
+      // orphaned previous-connection socket after a newer connect() has already
+      // reassigned `ws` — see the 'close' handler below.
+      const socket = createWebSocket(`wss://api.openai.com/v1/realtime?model=${model}`, {
         headers: { Authorization: `Bearer ${apiKey}` },
       });
+      ws = socket;
 
-      ws.on('open', () => {
-        ws.send(JSON.stringify({
+      socket.on('open', () => {
+        socket.send(JSON.stringify({
           type: 'session.update',
           session: {
             type: 'realtime',
@@ -44,7 +50,7 @@ function createRealtimeSttClient({ apiKey, model, transcribeModel, createWebSock
         resolve();
       });
 
-      ws.on('message', (data) => {
+      socket.on('message', (data) => {
         let event;
         try {
           event = JSON.parse(data.toString());
@@ -61,12 +67,19 @@ function createRealtimeSttClient({ apiKey, model, transcribeModel, createWebSock
         }
       });
 
-      ws.on('error', (err) => {
+      socket.on('error', (err) => {
         emitter.emit('error', err);
         reject(err);
       });
 
-      ws.on('close', () => {
+      socket.on('close', () => {
+        if (socket !== ws) {
+          // This socket has already been superseded by a later connect() call.
+          // The shared `expectClose` flag belongs to `ws`, not to this stale
+          // socket, so touching it here would either false-alarm on the live
+          // connection or wrongly mark a future real drop as already-expected.
+          return;
+        }
         // ws.send() on a closed socket is a silent no-op, so without this the whole
         // pipeline goes dead with zero signal. Only surface it when we didn't ask
         // for the close ourselves.

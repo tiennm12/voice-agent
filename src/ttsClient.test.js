@@ -177,3 +177,41 @@ test('abort() does not emit disconnected (deliberate shutdown, not a drop)', asy
 
   assert.equal(disconnected, false);
 });
+
+test('fix #3 (round 2): a stale socket from a superseded connect() firing close late does not false-alarm, and a real drop on the new connection is still reported', async () => {
+  const fakeWs1 = new FakeWs();
+  const fakeWs2 = new FakeWs();
+  const sockets = [fakeWs1, fakeWs2];
+  let callIndex = 0;
+  const client = createTtsClient({
+    apiKey: 'xi-test',
+    voiceId: 'voice123',
+    modelId: 'eleven_flash_v2_5',
+    createWebSocket: () => {
+      const socket = sockets[callIndex];
+      callIndex += 1;
+      queueMicrotask(() => socket.emit('open'));
+      return socket;
+    },
+  });
+
+  await client.connect(); // turn 1 -> fakeWs1
+  fakeWs1.emit('message', Buffer.from(JSON.stringify({ isFinal: true }))); // turn 1 ends normally
+
+  await client.connect(); // turn 2 -> fakeWs2; `ws` is reassigned and expectClose resets to false
+
+  let disconnected = false;
+  client.on('disconnected', () => {
+    disconnected = true;
+  });
+
+  // Turn 1's now-orphaned socket finally fires its close event, arriving late (after
+  // turn 2 already reconnected). This must not be reported as a drop on turn 2, and
+  // must not consume/re-latch the flag meant for turn 2's own live socket.
+  fakeWs1.emit('close');
+  assert.equal(disconnected, false, 'an orphaned previous-turn socket closing must not false-alarm on the new connection');
+
+  // The live (turn 2) socket dropping unexpectedly must still be reported.
+  fakeWs2.emit('close');
+  assert.equal(disconnected, true, 'a real drop on the current connection must still be reported after a reconnect');
+});

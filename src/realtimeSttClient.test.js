@@ -190,6 +190,43 @@ test('close() does not emit disconnected (deliberate shutdown, not a drop)', asy
   assert.equal(disconnected, false);
 });
 
+test('fix #3 (round 2): a stale socket from a superseded connect() firing close late does not false-alarm, and a real drop on the new connection is still reported', async () => {
+  const fakeWs1 = new FakeWs();
+  const fakeWs2 = new FakeWs();
+  const sockets = [fakeWs1, fakeWs2];
+  let callIndex = 0;
+  const client = createRealtimeSttClient({
+    apiKey: 'sk-test',
+    model: 'gpt-realtime-2.1',
+    transcribeModel: 'gpt-4o-transcribe',
+    createWebSocket: () => {
+      const socket = sockets[callIndex];
+      callIndex += 1;
+      queueMicrotask(() => {
+        socket.readyState = FakeWs.OPEN;
+        socket.emit('open');
+      });
+      return socket;
+    },
+  });
+
+  await client.connect(); // first connection -> fakeWs1
+  await client.connect(); // reconnect -> fakeWs2; `ws` is reassigned and expectClose resets to false
+
+  let disconnected = false;
+  client.on('disconnected', () => {
+    disconnected = true;
+  });
+
+  // fakeWs1's now-orphaned close event arrives late, after the reconnect.
+  fakeWs1.emit('close');
+  assert.equal(disconnected, false, 'an orphaned previous-connection socket closing must not false-alarm on the new connection');
+
+  // The live (second) socket dropping unexpectedly must still be reported.
+  fakeWs2.emit('close');
+  assert.equal(disconnected, true, 'a real drop on the current connection must still be reported after a reconnect');
+});
+
 test('close() closes the underlying socket', async () => {
   const fakeWs = new FakeWs();
   const client = createRealtimeSttClient({
