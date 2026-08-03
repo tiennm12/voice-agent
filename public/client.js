@@ -50,6 +50,7 @@ function startPlaybackStream() {
   mediaSource.addEventListener('sourceopen', () => {
     sourceBuffer = mediaSource.addSourceBuffer('audio/mpeg');
     sourceBuffer.addEventListener('updateend', appendNextPendingChunk);
+    appendNextPendingChunk();
   });
 
   audioEl.play().catch(() => {
