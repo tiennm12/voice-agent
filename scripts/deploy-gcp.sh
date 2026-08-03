@@ -66,13 +66,30 @@ sudo systemctl daemon-reload
 sudo systemctl enable voice-agent
 sudo systemctl restart voice-agent
 
-echo "== Writing Caddyfile (self-signed cert, IP-only) =="
-sudo tee /etc/caddy/Caddyfile > /dev/null <<EOF
-:443 {
-	tls internal
-	reverse_proxy localhost:3000
-}
-EOF
+echo "== Generating self-signed TLS cert for this VM's external IP =="
+# `tls internal` on a host-less ":443" site block has no hostname to issue a
+# cert for, so on-demand issuance fails at handshake time ("TLS alert:
+# internal error") for a bare IP connection with no SNI. Generate a static
+# self-signed cert for the VM's actual external IP instead — this is the
+# reliable option for an IP-only (no domain) deployment.
+EXTERNAL_IP="$(curl -s -H 'Metadata-Flavor: Google' 'http://metadata.google.internal/computeMetadata/v1/instance/network-interfaces/0/access-configs/0/external-ip')"
+if [ -z "$EXTERNAL_IP" ]; then
+  echo "!! Could not auto-detect external IP from GCE metadata; falling back to 'tls internal' (may not work for bare-IP browser access)."
+  CERT_DIRECTIVE="tls internal"
+else
+  echo "External IP: $EXTERNAL_IP"
+  if [ ! -f /etc/caddy/selfsigned.crt ]; then
+    sudo openssl req -x509 -newkey rsa:2048 -nodes \
+      -keyout /etc/caddy/selfsigned.key -out /etc/caddy/selfsigned.crt \
+      -days 365 -subj "/CN=$EXTERNAL_IP" -addext "subjectAltName=IP:$EXTERNAL_IP"
+    sudo chown caddy:caddy /etc/caddy/selfsigned.key /etc/caddy/selfsigned.crt
+    sudo chmod 600 /etc/caddy/selfsigned.key
+  fi
+  CERT_DIRECTIVE="tls /etc/caddy/selfsigned.crt /etc/caddy/selfsigned.key"
+fi
+
+echo "== Writing Caddyfile =="
+printf ':443 {\n\t%s\n\treverse_proxy localhost:3000\n}\n' "$CERT_DIRECTIVE" | sudo tee /etc/caddy/Caddyfile > /dev/null
 
 sudo systemctl restart caddy
 
