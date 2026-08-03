@@ -8,6 +8,9 @@ class FakeWs extends EventEmitter {
   constructor() {
     super();
     this.sent = [];
+    // Mirror the `ws` package's readyState constants/behavior: instances start
+    // CONNECTING and only become OPEN once the 'open' event fires.
+    this.readyState = FakeWs.CONNECTING;
   }
   send(data) {
     this.sent.push(JSON.parse(data));
@@ -16,6 +19,14 @@ class FakeWs extends EventEmitter {
     this.closed = true;
   }
 }
+FakeWs.CONNECTING = 0;
+FakeWs.OPEN = 1;
+FakeWs.CLOSING = 2;
+FakeWs.CLOSED = 3;
+FakeWs.prototype.CONNECTING = FakeWs.CONNECTING;
+FakeWs.prototype.OPEN = FakeWs.OPEN;
+FakeWs.prototype.CLOSING = FakeWs.CLOSING;
+FakeWs.prototype.CLOSED = FakeWs.CLOSED;
 
 test('connect() opens the socket with the auth header and sends session.update', async () => {
   let capturedUrl;
@@ -28,7 +39,10 @@ test('connect() opens the socket with the auth header and sends session.update',
     createWebSocket: (url, options) => {
       capturedUrl = url;
       capturedOptions = options;
-      queueMicrotask(() => fakeWs.emit('open'));
+      queueMicrotask(() => {
+        fakeWs.readyState = FakeWs.OPEN;
+        fakeWs.emit('open');
+      });
       return fakeWs;
     },
   });
@@ -51,7 +65,10 @@ test('emits speechStarted and transcriptFinal from incoming server events', asyn
     model: 'gpt-realtime-2.1',
     transcribeModel: 'gpt-4o-transcribe',
     createWebSocket: () => {
-      queueMicrotask(() => fakeWs.emit('open'));
+      queueMicrotask(() => {
+        fakeWs.readyState = FakeWs.OPEN;
+        fakeWs.emit('open');
+      });
       return fakeWs;
     },
   });
@@ -77,7 +94,10 @@ test('sendAudioChunk sends base64-encoded audio in an input_audio_buffer.append 
     model: 'gpt-realtime-2.1',
     transcribeModel: 'gpt-4o-transcribe',
     createWebSocket: () => {
-      queueMicrotask(() => fakeWs.emit('open'));
+      queueMicrotask(() => {
+        fakeWs.readyState = FakeWs.OPEN;
+        fakeWs.emit('open');
+      });
       return fakeWs;
     },
   });
@@ -91,6 +111,32 @@ test('sendAudioChunk sends base64-encoded audio in an input_audio_buffer.append 
   assert.equal(fakeWs.sent[0].audio, Buffer.from([1, 2, 3]).toString('base64'));
 });
 
+test('sendAudioChunk before the socket is open is a safe no-op', async () => {
+  const fakeWs = new FakeWs();
+  const client = createRealtimeSttClient({
+    apiKey: 'sk-test',
+    model: 'gpt-realtime-2.1',
+    transcribeModel: 'gpt-4o-transcribe',
+    createWebSocket: () => {
+      // 'open' is deferred to a microtask, same as the real `ws` handshake, so
+      // the socket is still CONNECTING when we call sendAudioChunk below.
+      queueMicrotask(() => {
+        fakeWs.readyState = FakeWs.OPEN;
+        fakeWs.emit('open');
+      });
+      return fakeWs;
+    },
+  });
+
+  const connectPromise = client.connect();
+  assert.equal(fakeWs.readyState, FakeWs.CONNECTING);
+
+  assert.doesNotThrow(() => client.sendAudioChunk(Buffer.from([1, 2, 3])));
+  assert.equal(fakeWs.sent.length, 0);
+
+  await connectPromise;
+});
+
 test('close() closes the underlying socket', async () => {
   const fakeWs = new FakeWs();
   const client = createRealtimeSttClient({
@@ -98,7 +144,10 @@ test('close() closes the underlying socket', async () => {
     model: 'gpt-realtime-2.1',
     transcribeModel: 'gpt-4o-transcribe',
     createWebSocket: () => {
-      queueMicrotask(() => fakeWs.emit('open'));
+      queueMicrotask(() => {
+        fakeWs.readyState = FakeWs.OPEN;
+        fakeWs.emit('open');
+      });
       return fakeWs;
     },
   });

@@ -63,7 +63,7 @@ function createRealtimeSttClient({ apiKey, model, transcribeModel, createWebSock
   }
 
   function sendAudioChunk(buffer) {
-    if (!ws) return;
+    if (!ws || ws.readyState !== ws.OPEN) return;
     ws.send(JSON.stringify({ type: 'input_audio_buffer.append', audio: buffer.toString('base64') }));
   }
 

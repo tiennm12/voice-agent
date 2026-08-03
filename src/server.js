@@ -90,6 +90,10 @@ function main() {
     browserWs.on('close', () => {
       orchestrator.stop();
     });
+
+    browserWs.on('error', (err) => {
+      console.error('[server] browser websocket error', err);
+    });
   });
 
   server.listen(config.port, () => {
