@@ -12,7 +12,7 @@ const { loadConfig } = require('./config');
 const { createRealtimeSttClient } = require('./realtimeSttClient');
 const { createLlmClient } = require('./llmClient');
 const { createTtsClient } = require('./ttsClient');
-const { createSessionOrchestrator } = require('./sessionOrchestrator');
+const { createSessionOrchestrator, OPENING_GREETING_INSTRUCTION } = require('./sessionOrchestrator');
 
 const CONTENT_TYPES = {
   '.html': 'text/html; charset=utf-8',
@@ -72,6 +72,7 @@ function main() {
       llmClient,
       ttsClient,
       sessionId,
+      openingGreeting: OPENING_GREETING_INSTRUCTION,
       sendControl: (msg) => {
         if (browserWs.readyState === browserWs.OPEN) browserWs.send(JSON.stringify(msg));
       },

@@ -132,6 +132,72 @@ test('happy path: transcript -> LLM tokens -> chunked TTS -> audio forwarded -> 
   assert.ok(controlMessages.some((m) => m.type === 'state' && m.state === 'listening'));
 });
 
+test('opening greeting: openingGreeting speaks first with no preceding transcript, and history stores it under the assistant role only', async () => {
+  const sttClient = makeFakeSttClient();
+  const ttsClient = makeFakeTtsClient();
+  let capturedMessages;
+  const llmClient = makeFakeLlmClient((messages, { onToken, onDone }) => {
+    capturedMessages = messages;
+    onToken('Xin ');
+    onToken('chào');
+    onToken('.');
+    onDone();
+  });
+
+  const controlMessages = [];
+  const orchestrator = createSessionOrchestrator({
+    systemPrompt: 'SYS',
+    sttClient,
+    llmClient,
+    ttsClient,
+    openingGreeting: 'GREET_INSTRUCTION',
+    sendControl: (msg) => controlMessages.push(msg),
+    sendAudio: () => {},
+  });
+
+  await orchestrator.start();
+  await new Promise((r) => setImmediate(r));
+
+  assert.ok(!controlMessages.some((m) => m.type === 'transcript'));
+  assert.ok(controlMessages.some((m) => m.type === 'state' && m.state === 'speaking'));
+  assert.deepEqual(ttsClient.calls.sendText, ['Xin chào.']);
+  assert.equal(capturedMessages[0].role, 'system');
+  const lastMsg = capturedMessages[capturedMessages.length - 1];
+  assert.equal(lastMsg.role, 'user');
+  assert.equal(lastMsg.content, 'GREET_INSTRUCTION');
+
+  ttsClient.emitTurnComplete();
+
+  sttClient.emitTranscriptFinal('Tôi muốn hỏi giá cước');
+  await new Promise((r) => setImmediate(r));
+
+  assert.equal(capturedMessages[1].role, 'assistant');
+  assert.equal(capturedMessages[1].content, 'Xin chào.');
+  assert.equal(capturedMessages[2].role, 'user');
+  assert.equal(capturedMessages[2].content, 'Tôi muốn hỏi giá cước');
+});
+
+test('opening greeting: disabled by default (no openingGreeting option) does not speak on start()', async () => {
+  const sttClient = makeFakeSttClient();
+  const ttsClient = makeFakeTtsClient();
+  const llmClient = makeFakeLlmClient(() => {
+    assert.fail('LLM should not be called on start() when openingGreeting is not set');
+  });
+  const orchestrator = createSessionOrchestrator({
+    systemPrompt: 'SYS',
+    sttClient,
+    llmClient,
+    ttsClient,
+    sendControl: () => {},
+    sendAudio: () => {},
+  });
+
+  await orchestrator.start();
+  await new Promise((r) => setImmediate(r));
+
+  assert.equal(ttsClient.calls.connect, 0);
+});
+
 test('barge-in: speechStarted while speaking aborts the LLM and TTS turn', async () => {
   const sttClient = makeFakeSttClient();
   const ttsClient = makeFakeTtsClient();

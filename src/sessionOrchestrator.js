@@ -5,6 +5,13 @@ const { buildMessages } = require('./promptBuilder');
 
 const LLM_ERROR_APOLOGY = 'Xin lỗi, tôi gặp sự cố kỹ thuật, bạn nói lại được không?';
 
+// Fed to the LLM as the "new user turn" purely to prompt an opening line —
+// it is never shown to the browser as a transcript and never stored in
+// history under the 'user' role (see runTurn's isKickoff handling), since
+// no user actually said this.
+const OPENING_GREETING_INSTRUCTION =
+  'Hãy chủ động chào khách hàng trước và giới thiệu ngắn gọn bạn là ai, có thể giúp gì — đừng chờ khách hỏi trước.';
+
 function createSessionOrchestrator({
   systemPrompt,
   sttClient,
@@ -13,6 +20,11 @@ function createSessionOrchestrator({
   sendControl,
   sendAudio,
   sessionId = '',
+  // Instruction text to prompt an opening line the agent speaks as soon as
+  // the call connects, before the caller says anything. Falsy (the default)
+  // disables it entirely — existing callers/tests that don't pass this see
+  // no behavior change.
+  openingGreeting = null,
 }) {
   const logPrefix = `[${sessionId}]`;
   const state = createSessionState();
@@ -110,7 +122,7 @@ function createSessionOrchestrator({
     }
   });
 
-  function runTurn(userText) {
+  function runTurn(userText, { isKickoff = false } = {}) {
     const turnStartedAt = Date.now();
     const messages = buildMessages({ systemPrompt, history, newUserText: userText });
     let assistantText = '';
@@ -214,11 +226,13 @@ function createSessionOrchestrator({
         } else {
           llmDonePending = true;
         }
-        history = [
-          ...history,
-          { role: 'user', content: userText },
-          { role: 'assistant', content: assistantText },
-        ];
+        history = isKickoff
+          ? [...history, { role: 'assistant', content: assistantText }]
+          : [
+              ...history,
+              { role: 'user', content: userText },
+              { role: 'assistant', content: assistantText },
+            ];
       },
       onError: (err) => {
         if (!isCurrentTurn()) return; // superseded by a barge-in; drop it
@@ -246,7 +260,16 @@ function createSessionOrchestrator({
 
   function start() {
     state.transition('CALL_STARTED');
-    return sttClient.connect();
+    return sttClient.connect().then(() => {
+      // Speak first instead of waiting for the caller to say something —
+      // reuses the TRANSCRIPT_FINAL transition (listening -> thinking) since
+      // that's exactly the state move a real turn needs, even though no
+      // transcript actually arrived.
+      if (openingGreeting && state.current === 'listening') {
+        state.transition('TRANSCRIPT_FINAL');
+        runTurn(openingGreeting, { isKickoff: true });
+      }
+    });
   }
 
   function stop() {
@@ -267,4 +290,4 @@ function createSessionOrchestrator({
   return { start, stop, handleAudioChunk };
 }
 
-module.exports = { createSessionOrchestrator };
+module.exports = { createSessionOrchestrator, OPENING_GREETING_INSTRUCTION };
