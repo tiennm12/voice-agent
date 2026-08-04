@@ -61,7 +61,7 @@ function createSessionOrchestrator({
       return;
     }
     state.transition('TRANSCRIPT_FINAL');
-    sendControl({ type: 'transcript', text: transcript });
+    sendControl({ type: 'transcript', role: 'user', text: transcript });
     runTurn(transcript);
   });
 
@@ -233,6 +233,7 @@ function createSessionOrchestrator({
               { role: 'user', content: userText },
               { role: 'assistant', content: assistantText },
             ];
+        sendControl({ type: 'transcript', role: 'assistant', text: assistantText });
       },
       onError: (err) => {
         if (!isCurrentTurn()) return; // superseded by a barge-in; drop it
@@ -242,6 +243,7 @@ function createSessionOrchestrator({
           // alive for the next turn instead of surfacing the raw error message.
           sendChunkToTts(LLM_ERROR_APOLOGY);
           ttsClient.endTurn();
+          sendControl({ type: 'transcript', role: 'assistant', text: LLM_ERROR_APOLOGY });
         } else {
           // TTS itself isn't available for this turn (still connecting, or never
           // will connect) — nothing can speak the apology, so fall back to the

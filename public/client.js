@@ -113,7 +113,7 @@ function stopPlaybackStream() {
 function handleServerMessage(event) {
   if (typeof event.data === 'string') {
     const msg = JSON.parse(event.data);
-    if (msg.type === 'transcript') appendTranscript('user', msg.text);
+    if (msg.type === 'transcript') appendTranscript(msg.role || 'user', msg.text);
     if (msg.type === 'state') setStatus(msg.state);
     if (msg.type === 'error') appendTranscript('error', msg.message);
     if (msg.type === 'interrupt') stopPlaybackStream();

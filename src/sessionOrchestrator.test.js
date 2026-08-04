@@ -127,7 +127,10 @@ test('happy path: transcript -> LLM tokens -> chunked TTS -> audio forwarded -> 
   ttsClient.emitTurnComplete();
 
   assert.deepEqual(audioMessages, [Buffer.from([1, 2])]);
-  assert.ok(controlMessages.some((m) => m.type === 'transcript' && m.text === 'Chào bạn'));
+  assert.ok(controlMessages.some((m) => m.type === 'transcript' && m.role === 'user' && m.text === 'Chào bạn'));
+  assert.ok(
+    controlMessages.some((m) => m.type === 'transcript' && m.role === 'assistant' && m.text === 'Xin chào.'),
+  );
   assert.ok(controlMessages.some((m) => m.type === 'state' && m.state === 'speaking'));
   assert.ok(controlMessages.some((m) => m.type === 'state' && m.state === 'listening'));
 });
@@ -158,7 +161,10 @@ test('opening greeting: openingGreeting speaks first with no preceding transcrip
   await orchestrator.start();
   await new Promise((r) => setImmediate(r));
 
-  assert.ok(!controlMessages.some((m) => m.type === 'transcript'));
+  assert.ok(!controlMessages.some((m) => m.type === 'transcript' && m.role === 'user'));
+  assert.ok(
+    controlMessages.some((m) => m.type === 'transcript' && m.role === 'assistant' && m.text === 'Xin chào.'),
+  );
   assert.ok(controlMessages.some((m) => m.type === 'state' && m.state === 'speaking'));
   assert.deepEqual(ttsClient.calls.sendText, ['Xin chào.']);
   assert.equal(capturedMessages[0].role, 'system');
