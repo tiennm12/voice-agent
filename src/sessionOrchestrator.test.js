@@ -234,6 +234,42 @@ test('barge-in: speechStarted while speaking aborts the LLM and TTS turn', async
   assert.ok(controlMessages.some((m) => m.type === 'interrupt'));
 });
 
+test('barge-in: speechStarted after the turn already completed (state back to listening) still flushes client playback', async () => {
+  // Regression: ElevenLabs can finish STREAMING a reply well before the browser
+  // finishes PLAYING it, so state may already be 'listening' again by the time
+  // VAD reports the caller talking over audio that is still audibly playing.
+  // The client-side flush must not be gated on backend state.
+  const sttClient = makeFakeSttClient();
+  const ttsClient = makeFakeTtsClient();
+  const llmClient = makeFakeLlmClient((messages, { onToken, onDone }) => {
+    onToken('Xin chào.');
+    onDone();
+  });
+
+  const controlMessages = [];
+  const orchestrator = createSessionOrchestrator({
+    systemPrompt: 'SYS',
+    sttClient,
+    llmClient,
+    ttsClient,
+    sendControl: (msg) => controlMessages.push(msg),
+    sendAudio: () => {},
+  });
+
+  await orchestrator.start();
+  sttClient.emitTranscriptFinal('Chào bạn');
+  await new Promise((r) => setImmediate(r));
+  ttsClient.emitTurnComplete(); // TTS server finished streaming -> state back to 'listening'
+
+  controlMessages.length = 0;
+  assert.doesNotThrow(() => sttClient.emitSpeechStarted());
+
+  assert.ok(controlMessages.some((m) => m.type === 'interrupt'));
+  // Nothing was actually in flight, so no abort should have happened.
+  assert.equal(llmClient.abortCalls.length, 0);
+  assert.equal(ttsClient.calls.abort, 0);
+});
+
 test('TTS connect failure surfaces an error, aborts the parallel LLM call, and returns to listening instead of hanging in thinking', async () => {
   const sttClient = makeFakeSttClient();
   const ttsClient = makeFailingConnectTtsClient('ws connect failed');

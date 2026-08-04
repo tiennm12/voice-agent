@@ -45,11 +45,20 @@ function createSessionOrchestrator({
   }
 
   sttClient.on('speechStarted', () => {
+    // Always flush whatever the browser is still playing/queued, regardless
+    // of our own state. ElevenLabs can finish STREAMING a turn's audio well
+    // before the browser finishes PLAYING it (generation is faster than
+    // real-time playback for anything but very short replies), so by the
+    // time VAD detects the caller talking over the agent, ttsClient's
+    // 'turnComplete' may have already fired and flipped state back to
+    // 'listening' even though audio is still audibly playing on the phone.
+    // Gating this on state would silently drop the interrupt in exactly
+    // that (common) case.
+    sendControl({ type: 'interrupt' });
     if (state.current === 'thinking' || state.current === 'speaking') {
       abandonCurrentTurn(); // supersede any in-flight turn (including ones still awaiting TTS connect)
       ttsClient.abort();
       state.transition('USER_INTERRUPTED');
-      sendControl({ type: 'interrupt' });
     }
   });
 
