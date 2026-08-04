@@ -42,7 +42,13 @@ function createRealtimeSttClient({ apiKey, model, transcribeModel, createWebSock
                   create_response: false,
                   interrupt_response: false,
                 },
-                transcription: { model: transcribeModel },
+                // 'vi' constrains/guides the transcription to Vietnamese instead of
+                // letting the model auto-detect language per utterance.
+                transcription: { model: transcribeModel, language: 'vi' },
+                // 'near_field' suits a phone mic held close to the mouth (vs.
+                // 'far_field' for laptop/conference-room mics) and filters ambient
+                // noise from the input before it reaches VAD and the model.
+                noise_reduction: { type: 'near_field' },
               },
             },
           },

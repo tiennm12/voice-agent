@@ -56,6 +56,8 @@ test('connect() opens the socket with the auth header and sends session.update',
   assert.equal(fakeWs.sent[0].session.audio.input.turn_detection.type, 'server_vad');
   assert.equal(fakeWs.sent[0].session.audio.input.turn_detection.create_response, false);
   assert.equal(fakeWs.sent[0].session.audio.input.transcription.model, 'gpt-4o-transcribe');
+  assert.equal(fakeWs.sent[0].session.audio.input.transcription.language, 'vi');
+  assert.equal(fakeWs.sent[0].session.audio.input.noise_reduction.type, 'near_field');
 });
 
 test('emits speechStarted and transcriptFinal from incoming server events', async () => {
