@@ -47,6 +47,9 @@ Listing or cloning voices needs an ElevenLabs API key with the `voices_read` /
 - Calls older than `RETENTION_DAYS` (default 30) are deleted, recording
   included.
 
+`data/secret.key` signs login sessions and call links. It is created on first
+start; deleting it logs everyone out and voids links already sent.
+
 The cost is an estimate: usage reported by the APIs (LLM tokens, transcription
 tokens, TTS characters) times `config/pricing.json`. Check that file against
 your own plans; `usd_to_vnd` is a reference rate.
@@ -100,7 +103,7 @@ the caller's last word to the first audio of the answer):
 | … + `OPENAI_TRANSCRIBE_MODEL=gpt-4o-mini-transcribe` | 2.0 s (no gain in the transcription step) |
 | … + `OPENAI_CHAT_MODEL=gpt-4.1-nano` | 1.9 s |
 
-The fixed greeting starts in about 0.15 s. Getting replies under a second
+The fixed greeting starts in 0.3-0.4 s. Getting replies under a second
 needs more than knobs: transcription and the LLM's first token cost about 0.6 s
 each. The knobs are off by default because each trades something (cutting in on
 pauses, choppier speech, a weaker model) that should be judged by ear.

@@ -1,8 +1,11 @@
 import asyncio
 import hashlib
 import hmac
+import os
 import re
+import secrets
 import time
+from pathlib import Path
 from urllib.parse import urlsplit
 
 from aiohttp import web
@@ -19,9 +22,28 @@ CALL_LINK_PATH = re.compile(r'/c/(?P<page_id>[^/]+)|/api/calls/(?P<api_id>[^/]+)
 LOGIN_FAILURE_DELAY = 1.0
 
 
-def session_secret(password):
-    """Signing key derived from the dashboard password: changing the password logs everyone out."""
-    return hashlib.sha256(b'voice-agent-session:' + password.encode()).digest()
+def load_secret(data_dir):
+    """The key every token is signed with: random, created on first start, kept in <data_dir>/secret.key.
+
+    Deliberately not derived from the password. Call links leave the server (through
+    Telegram), and a password-derived key would let anyone holding a link test password
+    guesses offline against its signature.
+    """
+    path = Path(data_dir) / 'secret.key'
+    try:
+        return path.read_bytes()
+    except FileNotFoundError:
+        secret = secrets.token_bytes(32)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        # Created owner-only (where the OS has such a thing), and never over an existing key.
+        with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), 'wb') as file:
+            file.write(secret)
+        return secret
+
+
+def session_subject(password):
+    """What a session token is a token for. Naming the password in it makes a password change end every session."""
+    return 'session:' + hashlib.sha256(password.encode()).hexdigest()[:16]
 
 
 def _signature(secret, subject, expires):
@@ -68,15 +90,15 @@ def _same_origin(request):
     return origin is None or urlsplit(origin).netloc == request.host
 
 
-def setup_auth(app, password, login_page):
+def setup_auth(app, password, secret, login_page):
     """Puts everything behind one password: pages redirect to /login, the API and /ws answer 401."""
-    secret = session_secret(password)
+    session = session_subject(password)
 
     @web.middleware
     async def require_session(request, handler):
         allowed = (
             request.path in PUBLIC_PATHS
-            or token_is_valid(secret, 'session', request.cookies.get(SESSION_COOKIE))
+            or token_is_valid(secret, session, request.cookies.get(SESSION_COOKIE))
             or _has_call_link(request, secret)
         )
         if not allowed:
@@ -99,7 +121,7 @@ def setup_auth(app, password, login_page):
         response = web.HTTPFound('/')
         response.set_cookie(
             SESSION_COOKIE,
-            make_token(secret, 'session', SESSION_LIFETIME),
+            make_token(secret, session, SESSION_LIFETIME),
             max_age=SESSION_LIFETIME,
             httponly=True,
             samesite='Strict',

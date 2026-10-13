@@ -12,7 +12,7 @@ from dotenv import load_dotenv
 from openai import AsyncOpenAI
 
 from .api import setup_api
-from .auth import make_call_link, session_secret, setup_auth
+from .auth import load_secret, make_call_link, setup_auth
 from .call_record import CallRecord, purge_old_calls
 from .config import build_system_prompt, load_config
 from .db import Database
@@ -26,9 +26,6 @@ from .tts_client import AUDIO_FORMATS, TtsClient
 log = logging.getLogger(__name__)
 
 PUBLIC_DIR = Path(__file__).resolve().parent.parent / 'public'
-
-
-
 DB = web.AppKey('db', Database)
 PURGE_INTERVAL = 24 * 3600
 
@@ -38,6 +35,7 @@ def create_app(config, *, ws_connect=None, openai_client=None, http=None):
     upstream = {'notifier': None}
     config.data_dir.mkdir(parents=True, exist_ok=True)
     db = Database(config.data_dir / 'voicemail.db')
+    secret = load_secret(config.data_dir)  # signs sessions and call links
 
     def purge():
         purged = purge_old_calls(db, config.data_dir, config.retention_days, config.tz)
@@ -54,7 +52,6 @@ def create_app(config, *, ws_connect=None, openai_client=None, http=None):
         upstream['ws_connect'] = ws_connect or upstream['http'].ws_connect
         upstream['openai'] = openai_client or AsyncOpenAI(api_key=config.openai_api_key)
         if config.telegram_bot_token and config.telegram_chat_id:
-            secret = session_secret(config.dashboard_password)
             upstream['notifier'] = TelegramNotifier(
                 http=upstream['http'],
                 token=config.telegram_bot_token,
@@ -184,7 +181,7 @@ def create_app(config, *, ws_connect=None, openai_client=None, http=None):
     app[DB] = db
     app.cleanup_ctx.append(lifetime)
     app.on_response_prepare.append(forbid_stale_copies)
-    setup_auth(app, config.dashboard_password, PUBLIC_DIR / 'login.html')
+    setup_auth(app, config.dashboard_password, secret, PUBLIC_DIR / 'login.html')
     setup_api(app, db, config, PUBLIC_DIR, upstream)
     app.router.add_get('/', index)
     app.router.add_get('/ws', call)

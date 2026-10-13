@@ -325,13 +325,13 @@ def seed_call(client, tmp_path, call_id):
     (folder / 'caller.wav').write_bytes(b'RIFFdata')
 
 
-def link_query(call_id, lifetime=3600):
-    return {'t': auth.make_token(auth.session_secret(PASSWORD), f'call:{call_id}', lifetime)}
+def link_query(tmp_path, call_id, lifetime=3600):
+    return {'t': auth.make_token(auth.load_secret(tmp_path), f'call:{call_id}', lifetime)}
 
 
 async def test_a_call_link_opens_that_call_without_a_session(anonymous, tmp_path):
     seed_call(anonymous, tmp_path, CALL_ID)
-    query = link_query(CALL_ID)
+    query = link_query(tmp_path, CALL_ID)
 
     page = await anonymous.get(f'/c/{CALL_ID}', params=query)
     assert page.status == 200
@@ -352,7 +352,7 @@ async def test_a_call_link_opens_that_call_without_a_session(anonymous, tmp_path
 async def test_a_call_link_opens_nothing_but_its_own_call(anonymous, tmp_path):
     seed_call(anonymous, tmp_path, CALL_ID)
     seed_call(anonymous, tmp_path, OTHER_ID)
-    query = link_query(CALL_ID)
+    query = link_query(tmp_path, CALL_ID)
 
     assert (await anonymous.get(f'/api/calls/{OTHER_ID}', params=query)).status == 401
     assert (await anonymous.get(f'/api/calls/{OTHER_ID}/audio', params=query)).status == 401
@@ -366,8 +366,42 @@ async def test_a_call_link_opens_nothing_but_its_own_call(anonymous, tmp_path):
 async def test_an_expired_or_forged_call_link_is_refused(anonymous, tmp_path):
     seed_call(anonymous, tmp_path, CALL_ID)
 
-    for query in (link_query(CALL_ID, lifetime=-10), {'t': '9999999999.deadbeef'}, {'t': ''}, {}):
+    for query in (link_query(tmp_path, CALL_ID, lifetime=-10), {'t': '9999999999.deadbeef'}, {'t': ''}, {}):
         assert (await anonymous.get(f'/api/calls/{CALL_ID}', params=query)).status == 401, query
+
+
+async def test_knowing_the_password_is_not_enough_to_forge_a_call_link(anonymous, tmp_path):
+    # Links travel through Telegram. Were they signed with a key derived from the password,
+    # anyone holding one could guess passwords offline against its signature.
+    import hashlib
+
+    seed_call(anonymous, tmp_path, CALL_ID)
+    for derived in (PASSWORD.encode(), hashlib.sha256(PASSWORD.encode()).digest(),
+                    hashlib.sha256(b'voice-agent-session:' + PASSWORD.encode()).digest()):
+        forged = {'t': auth.make_token(derived, f'call:{CALL_ID}', 3600)}
+        assert (await anonymous.get(f'/api/calls/{CALL_ID}', params=forged)).status == 401
+
+
+async def test_sessions_and_links_survive_a_restart_but_a_new_password_ends_sessions(tmp_path):
+    client, _ = await start_app(tmp_path)
+    session = client.session.cookie_jar.filter_cookies(client.make_url('/'))['session'].value
+    seed_call(client, tmp_path, CALL_ID)
+    query = link_query(tmp_path, CALL_ID)
+    await client.close()
+
+    restarted, _ = await start_app(tmp_path, login=False)
+    try:
+        assert (await restarted.get('/api/calls', cookies={'session': session})).status == 200
+        assert (await restarted.get(f'/api/calls/{CALL_ID}', params=query)).status == 200
+    finally:
+        await restarted.close()
+
+    new_password, _ = await start_app(tmp_path, login=False, DASHBOARD_PASSWORD='a different password')
+    try:
+        assert (await new_password.get('/api/calls', cookies={'session': session})).status == 401
+        assert (await new_password.get(f'/api/calls/{CALL_ID}', params=query)).status == 200, 'links keep working'
+    finally:
+        await new_password.close()
 
 
 async def test_a_finished_call_is_announced_on_telegram_with_a_working_link(tmp_path):
