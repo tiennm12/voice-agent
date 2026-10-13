@@ -444,8 +444,29 @@ async def test_the_configured_chat_model_and_vad_tuning_reach_the_upstreams(tmp_
         upstream.stt.feed({'type': 'conversation.item.input_audio_transcription.completed', 'transcript': 'Alo'})
         await upstream.tts_socket(1)
 
-        assert upstream.openai.calls[0]['model'] == 'gpt-4.1-nano'
+        chat = upstream.openai.calls[0]
+        assert chat['model'] == 'gpt-4.1-nano'
+        assert 'reasoning_effort' not in chat, 'a model chosen by hand does not get the default model\'s setting'
         assert upstream.stt.sent[0]['session']['audio']['input']['turn_detection']['silence_duration_ms'] == 300
         await ws.close()
+    finally:
+        await client.close()
+
+
+async def test_by_default_both_the_reply_and_the_summary_use_gpt_6_luna_without_reasoning(tmp_path):
+    client, upstream = await start_app(tmp_path, FakeUpstream(reply='Dạ, mình ghi nhận rồi.'))
+    try:
+        ws = await client.ws_connect('/ws')
+        greeting_tts = await upstream.tts_socket(0)
+        greeting_tts.feed({'isFinal': True})
+        upstream.stt.feed({'type': 'conversation.item.input_audio_transcription.completed', 'transcript': 'Alo'})
+        await upstream.tts_socket(1)
+        await ws.close()
+        await saved_call(client, lambda call: call['summary'])
+
+        reply, summary = upstream.openai.calls
+        assert (reply['model'], reply['reasoning_effort'], reply['stream']) == ('gpt-6-luna', 'none', True)
+        assert (summary['model'], summary['reasoning_effort']) == ('gpt-6-luna', 'none')
+        assert summary['response_format'] == {'type': 'json_object'}
     finally:
         await client.close()

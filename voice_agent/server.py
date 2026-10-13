@@ -129,7 +129,11 @@ def create_app(config, *, ws_connect=None, openai_client=None, http=None):
             system_prompt=build_system_prompt(settings['system_doc'], settings['owner_name'], settings['language']),
             stt_client=stt,
             llm_stream=partial(
-                stream_completion, upstream['openai'], model=config.openai_chat_model, on_usage=record.add_llm_usage,
+                stream_completion,
+                upstream['openai'],
+                model=config.openai_chat_model,
+                reasoning_effort=config.openai_reasoning_effort,
+                on_usage=record.add_llm_usage,
             ),
             tts_client=tts,
             session_id=session_id,

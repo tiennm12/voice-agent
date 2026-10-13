@@ -7,7 +7,7 @@ from collections import Counter
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from .llm_client import CHAT_MODEL
+from .llm_client import CHAT_MODEL, CHAT_REASONING_EFFORT
 
 log = logging.getLogger(__name__)
 
@@ -152,6 +152,7 @@ class CallRecord:
             model=CHAT_MODEL,
             messages=[{'role': 'system', 'content': SUMMARY_PROMPT}, {'role': 'user', 'content': dialogue}],
             response_format={'type': 'json_object'},
+            **({'reasoning_effort': CHAT_REASONING_EFFORT} if CHAT_REASONING_EFFORT else {}),
         )
         if response.usage:
             self.add_llm_usage(response.usage)

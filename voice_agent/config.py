@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import timedelta, timezone
 from pathlib import Path
 
-from .llm_client import CHAT_MODEL
+from .llm_client import CHAT_MODEL, CHAT_REASONING_EFFORT
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -19,6 +19,7 @@ class Config:
     openai_realtime_model: str
     openai_transcribe_model: str
     openai_chat_model: str
+    openai_reasoning_effort: str | None
     vad_silence_ms: int | None
     vad_threshold: float | None
     elevenlabs_api_key: str
@@ -92,12 +93,17 @@ def load_config(env=None, read_system_doc=_read_system_doc, read_pricing=_read_p
         if not env.get(key):
             raise ValueError(f'Missing required env var: {key}')
 
+    chat_model = env.get('OPENAI_CHAT_MODEL') or CHAT_MODEL
     return Config(
         openai_api_key=env['OPENAI_API_KEY'],
         openai_realtime_model=env.get('OPENAI_REALTIME_MODEL') or 'gpt-realtime-2.1',
         openai_transcribe_model=env.get('OPENAI_TRANSCRIBE_MODEL') or 'gpt-4o-transcribe',
         # The model that talks to the caller. The llm rates in config/pricing.json must match it.
-        openai_chat_model=env.get('OPENAI_CHAT_MODEL') or CHAT_MODEL,
+        openai_chat_model=chat_model,
+        # The default effort goes with the default model only: a model picked by hand may
+        # not take the parameter at all, so it gets none unless one is set for it.
+        openai_reasoning_effort=env.get('OPENAI_REASONING_EFFORT')
+        or (CHAT_REASONING_EFFORT if chat_model == CHAT_MODEL else None),
         # Turn-detection tuning; unset leaves the OpenAI defaults (500ms of silence, threshold 0.5).
         vad_silence_ms=int(env['VAD_SILENCE_MS']) if env.get('VAD_SILENCE_MS') else None,
         vad_threshold=float(env['VAD_THRESHOLD']) if env.get('VAD_THRESHOLD') else None,

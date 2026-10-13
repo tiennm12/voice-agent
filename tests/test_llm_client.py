@@ -32,7 +32,8 @@ async def test_stream_completion_yields_each_content_delta_and_skips_empty_ones(
 
     assert tokens == ['Xin ', 'chào']
     assert calls == [{
-        'model': 'gpt-4.1-mini', 'messages': messages, 'stream': True, 'stream_options': {'include_usage': True},
+        'model': 'gpt-6-luna', 'reasoning_effort': 'none',
+        'messages': messages, 'stream': True, 'stream_options': {'include_usage': True},
     }]
 
 
@@ -79,3 +80,16 @@ async def test_stream_completion_reports_token_usage_from_the_final_chunk():
 
     assert tokens == ['Chào']
     assert reported == [usage]
+
+
+async def test_reasoning_effort_is_left_out_for_models_that_do_not_take_it():
+    async def stream():
+        yield chunk('Chào')
+
+    client, calls = fake_openai(stream)
+
+    [token async for token in stream_completion(client, [], model='gpt-6-luna', reasoning_effort='low')]
+    [token async for token in stream_completion(client, [], model='gpt-4.1-mini', reasoning_effort=None)]
+
+    assert calls[0]['reasoning_effort'] == 'low'
+    assert 'reasoning_effort' not in calls[1], 'models without reasoning reject the parameter'

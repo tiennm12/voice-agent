@@ -6,7 +6,7 @@ notifies the owner on Telegram and files it in a web dashboard. Product
 requirements: `docs/PRD.md`.
 
 Caller audio -> Python backend -> OpenAI Realtime API (speech-to-text + VAD) ->
-GPT-4.1-mini (streaming) -> ElevenLabs (streaming TTS) -> caller. The caller is
+gpt-6-luna with reasoning off (streaming) -> ElevenLabs (streaming TTS) -> caller. The caller is
 either a browser microphone (`/call.html`) or a real phone call bridged from an
 eTelecom extension (`/bridge.html`).
 
@@ -93,15 +93,29 @@ audio back, `response_ms` the whole wait. The caller waits a little longer
 still: the silence it takes to decide they have stopped (`VAD_SILENCE_MS`).
 
 Measured end to end with `scripts/probe.py` (median of 5 real calls each, from
-the caller's last word to the first audio of the answer):
+the caller's last word to the first audio of the answer), with gpt-4.1-mini as
+the chat model:
 
 | Setup | Median |
 |---|---|
-| Defaults | 2.7 s |
+| No knobs | 2.7 s |
 | `VAD_SILENCE_MS=300` | 2.15 s |
 | … + `ELEVENLABS_AUTO_MODE=1` | 2.1 s (TTS step 340-550 ms -> 130-210 ms) |
 | … + `OPENAI_TRANSCRIBE_MODEL=gpt-4o-mini-transcribe` | 2.0 s (no gain in the transcription step) |
 | … + `OPENAI_CHAT_MODEL=gpt-4.1-nano` | 1.9 s |
+
+The chat model itself, no knobs, same method:
+
+| Chat model | Median reply | LLM first token | Price per 1M tokens (in / out) |
+|---|---|---|---|
+| gpt-4.1-mini | 2.4 s | 0.7 s | $0.40 / $1.60 |
+| gpt-4o-mini | 2.5 s | 0.75 s | $0.15 / $0.60 |
+| gpt-6-luna, reasoning off (the default) | 3.0 s | 0.9 s | $0.10 / $0.50 |
+
+gpt-6-luna reasons unless told not to: left at its own default its first token
+took 4.4 s. Hence `reasoning_effort=none`, which is applied automatically with
+the default model. Another model is one line in `.env` (`OPENAI_CHAT_MODEL`)
+plus its two prices in `config/pricing.json`.
 
 The fixed greeting starts in 0.3-0.4 s. Getting replies under a second
 needs more than knobs: transcription and the LLM's first token cost about 0.6 s

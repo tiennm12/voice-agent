@@ -141,13 +141,12 @@ def test_the_system_prompt_can_tell_the_llm_to_answer_in_the_callers_language():
 
 def test_load_config_latency_knobs_are_off_unless_set():
     config = load_config(env=REQUIRED_ENV, read_system_doc=lambda: 'doc')
-    assert (config.openai_chat_model, config.vad_silence_ms, config.vad_threshold) == ('gpt-4.1-mini', None, None)
+    assert (config.vad_silence_ms, config.vad_threshold) == (None, None)
 
     config = load_config(
-        env={**REQUIRED_ENV, 'OPENAI_CHAT_MODEL': 'gpt-4.1-nano', 'VAD_SILENCE_MS': '300', 'VAD_THRESHOLD': '0.7'},
-        read_system_doc=lambda: 'doc',
+        env={**REQUIRED_ENV, 'VAD_SILENCE_MS': '300', 'VAD_THRESHOLD': '0.7'}, read_system_doc=lambda: 'doc',
     )
-    assert (config.openai_chat_model, config.vad_silence_ms, config.vad_threshold) == ('gpt-4.1-nano', 300, 0.7)
+    assert (config.vad_silence_ms, config.vad_threshold) == (300, 0.7)
 
 
 def test_load_config_tts_auto_mode_is_opt_in():
@@ -155,3 +154,29 @@ def test_load_config_tts_auto_mode_is_opt_in():
     for value, expected in (('1', True), ('true', True), ('0', False), ('', False)):
         config = load_config(env={**REQUIRED_ENV, 'ELEVENLABS_AUTO_MODE': value}, read_system_doc=lambda: 'doc')
         assert config.elevenlabs_auto_mode is expected, value
+
+
+def chat_model_and_effort(**env):
+    config = load_config(env={**REQUIRED_ENV, **env}, read_system_doc=lambda: 'doc')
+    return config.openai_chat_model, config.openai_reasoning_effort
+
+
+def test_the_default_chat_model_is_gpt_6_luna_with_reasoning_switched_off():
+    # Left to reason, it thinks for seconds before the first word of every reply.
+    assert chat_model_and_effort() == ('gpt-6-luna', 'none')
+
+
+def test_another_chat_model_does_not_inherit_the_default_reasoning_setting():
+    # gpt-4.1-mini and gpt-4o-mini answer 400 to a reasoning_effort they do not know.
+    assert chat_model_and_effort(OPENAI_CHAT_MODEL='gpt-4.1-mini') == ('gpt-4.1-mini', None)
+
+
+def test_reasoning_effort_can_be_set_for_any_chat_model():
+    assert chat_model_and_effort(OPENAI_REASONING_EFFORT='low') == ('gpt-6-luna', 'low')
+    assert chat_model_and_effort(OPENAI_CHAT_MODEL='gpt-6-sol', OPENAI_REASONING_EFFORT='none') == ('gpt-6-sol', 'none')
+
+
+def test_the_shipped_price_table_is_the_default_chat_models():
+    config = load_config(env=REQUIRED_ENV)
+    # gpt-6-luna on 2026-10-13: $0.10 in, $0.50 out per 1M tokens.
+    assert (config.pricing['llm']['input_per_1m_tokens'], config.pricing['llm']['output_per_1m_tokens']) == (0.10, 0.50)
