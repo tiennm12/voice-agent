@@ -10,11 +10,13 @@ class RealtimeSttClient(JsonWsClient):
     transcription's billing usage dict), 'error' (exception), 'disconnected'.
     """
 
-    def __init__(self, *, api_key, model, transcribe_model, ws_connect):
+    def __init__(self, *, api_key, model, transcribe_model, ws_connect, language='vi'):
         super().__init__(ws_connect)
         self._api_key = api_key
         self._model = model
-        self._transcribe_model = transcribe_model
+        # A language constrains/guides the transcription to it; None lets the model
+        # detect it per utterance (less accurate for Vietnamese, hence the default).
+        self._transcription = {'model': transcribe_model} | ({'language': language} if language else {})
 
     async def connect(self):
         await self._open(
@@ -34,9 +36,7 @@ class RealtimeSttClient(JsonWsClient):
                                 'create_response': False,
                                 'interrupt_response': False,
                             },
-                            # 'vi' constrains/guides the transcription to Vietnamese instead of
-                            # letting the model auto-detect language per utterance.
-                            'transcription': {'model': self._transcribe_model, 'language': 'vi'},
+                            'transcription': self._transcription,
                             # 'near_field' suits a phone mic held close to the mouth (vs.
                             # 'far_field' for laptop/conference-room mics) and filters ambient
                             # noise from the input before it reaches VAD and the model.

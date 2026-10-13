@@ -1,6 +1,9 @@
-import pytest
+import io
 
-from fakes import FakeUpstream, start_app
+import pytest
+from aiohttp import FormData
+
+from fakes import FakeHttp, FakeUpstream, start_app
 from voice_agent.server import DB
 
 DEFAULT_GREETING = 'Chào bạn, chủ máy hiện không thể nghe máy. Mình là trợ lý AI, bạn cần nhắn gì không ạ?'
@@ -142,25 +145,41 @@ async def test_stats_count_calls_and_cost_per_period(client):
 # --- settings ----------------------------------------------------------------
 
 
+def basics(settings):
+    return {key: settings[key] for key in ('owner_name', 'greeting', 'system_doc', 'blocked_numbers')}
+
+
 async def test_settings_start_from_the_defaults(client):
     settings = await (await client.get('/api/settings')).json()
 
-    assert settings == {
+    assert basics(settings) == {
         'owner_name': 'chủ máy', 'greeting': DEFAULT_GREETING, 'system_doc': 'doc', 'blocked_numbers': [],
     }
+    assert (settings['status'], settings['language'], settings['voice_id'], settings['work_hours']) == (
+        'normal', 'vi', 'v1', None,
+    )
 
 
 async def test_saved_settings_are_returned_and_blank_restores_the_default(client):
     saved = await client.put('/api/settings', json={'owner_name': '  anh Tuấn ', 'greeting': 'Alo, Tuấn nghe.'})
     assert saved.status == 200
-    assert await saved.json() == {
+    assert basics(await saved.json()) == {
         'owner_name': 'anh Tuấn', 'greeting': 'Alo, Tuấn nghe.', 'system_doc': 'doc', 'blocked_numbers': [],
     }
 
     reset = await (await client.put('/api/settings', json={'greeting': '', 'owner_name': None})).json()
-    assert reset == {
+    assert basics(reset) == {
         'owner_name': 'chủ máy', 'greeting': DEFAULT_GREETING, 'system_doc': 'doc', 'blocked_numbers': [],
     }
+
+
+async def test_a_working_schedule_round_trips_through_the_api(client):
+    hours = {'days': [1, 2, 3, 4, 5], 'from': '08:00', 'to': '17:30'}
+
+    saved = await (await client.put('/api/settings', json={'work_hours': hours})).json()
+
+    assert saved['work_hours'] == hours
+    assert (await client.put('/api/settings', json={'work_hours': {'days': [9], 'from': '08:00', 'to': '17:30'}})).status == 400
 
 
 async def test_the_default_greeting_follows_the_owner_name(client):
@@ -244,3 +263,171 @@ async def test_other_callers_are_let_through_and_leave_no_trace(client):
 async def test_the_block_check_needs_a_json_object(client):
     assert (await client.post('/api/blocked', data=b'nope')).status == 400
     assert (await client.post('/api/blocked', json=['0901234567'])).status == 400
+
+
+# --- schedule, voice and language apply to the next call ----------------------
+
+
+async def test_while_in_a_meeting_callers_hear_the_meeting_greeting(tmp_path):
+    client, upstream = await start_app(tmp_path)
+    try:
+        await client.put('/api/settings', json={'status': 'meeting', 'meeting_greeting': 'Sếp đang họp.'})
+
+        ws = await client.ws_connect('/ws')
+        greeting_tts = await upstream.tts_socket(0)
+
+        assert greeting_tts.sent[1] == {'text': 'Sếp đang họp. '}
+        await ws.close()
+    finally:
+        await client.close()
+
+
+async def test_the_chosen_voice_speaks_the_next_call(tmp_path):
+    client, upstream = await start_app(tmp_path)
+    try:
+        await client.put('/api/settings', json={'voice_id': 'c38kUX8pkfYO2kHyqfFy'})
+
+        ws = await client.ws_connect('/ws')
+        await upstream.tts_socket(0)
+
+        assert '/text-to-speech/c38kUX8pkfYO2kHyqfFy/stream-input' in upstream.tts_urls[0]
+        await ws.close()
+    finally:
+        await client.close()
+
+
+async def test_auto_language_lets_stt_detect_and_tells_the_llm_to_follow_the_caller(tmp_path):
+    client, upstream = await start_app(tmp_path, FakeUpstream(reply='Sure.'))
+    try:
+        await client.put('/api/settings', json={'language': 'auto'})
+
+        ws = await client.ws_connect('/ws')
+        greeting_tts = await upstream.tts_socket(0)
+        transcription = upstream.stt.sent[0]['session']['audio']['input']['transcription']
+        assert 'language' not in transcription
+
+        greeting_tts.feed({'isFinal': True})
+        upstream.stt.feed({'type': 'conversation.item.input_audio_transcription.completed', 'transcript': 'Hello'})
+        await upstream.tts_socket(1)
+        assert 'ngôn ngữ người gọi' in upstream.openai.calls[0]['messages'][0]['content']
+        await ws.close()
+    finally:
+        await client.close()
+
+
+# --- voices ------------------------------------------------------------------
+
+VOICES_REPLY = {
+    'voices': [
+        {'voice_id': 'abc123', 'name': 'Mai', 'category': 'premade', 'labels': {'gender': 'female', 'accent': 'northern'},
+         'preview_url': 'https://storage.example/mai.mp3', 'settings': {'ignored': True}},
+        {'voice_id': 'def456', 'name': 'Giọng của tôi', 'category': 'cloned', 'labels': None, 'preview_url': None},
+    ],
+    'has_more': False,
+}
+
+
+async def test_voices_are_listed_from_elevenlabs_with_the_current_choice(tmp_path):
+    http = FakeHttp(replies={'/v2/voices': (200, VOICES_REPLY)})
+    client, _ = await start_app(tmp_path, http=http)
+    try:
+        listing = await (await client.get('/api/voices')).json()
+
+        assert listing == {
+            'current': 'v1',
+            'voices': [
+                {'voice_id': 'abc123', 'name': 'Mai', 'category': 'premade',
+                 'labels': {'gender': 'female', 'accent': 'northern'}, 'preview_url': 'https://storage.example/mai.mp3'},
+                {'voice_id': 'def456', 'name': 'Giọng của tôi', 'category': 'cloned', 'labels': {}, 'preview_url': None},
+            ],
+        }
+        request = http.requests[0]
+        assert request['url'] == 'https://api.elevenlabs.io/v2/voices'
+        assert request['headers'] == {'xi-api-key': 'k2'}
+    finally:
+        await client.close()
+
+
+async def test_a_failing_voice_listing_is_a_bad_gateway_that_says_why(tmp_path):
+    missing_permission = {'detail': {'message': 'The API key you used is missing the permission voices_read.'}}
+    for http, reason in (
+        (FakeHttp(replies={'/v2/voices': (401, missing_permission)}), 'missing the permission voices_read'),
+        (FakeHttp(replies={'/v2/voices': (500, {'detail': 'boom'})}), 'boom'),
+        (FakeHttp(error=OSError('offline')), 'không kết nối được'),
+    ):
+        client, _ = await start_app(tmp_path, http=http)
+        try:
+            response = await client.get('/api/voices')
+            assert response.status == 502
+            assert reason in await response.text()
+        finally:
+            await client.close()
+
+
+def clone_form(name='Giọng của tôi', samples=(b'RIFF-sample-1', b'RIFF-sample-2')):
+    form = FormData()
+    if name is not None:
+        form.add_field('name', name)
+    for index, sample in enumerate(samples):
+        form.add_field('files', io.BytesIO(sample), filename=f'mau-{index}.wav', content_type='audio/wav')
+    return form
+
+
+async def test_cloning_a_voice_uploads_the_samples_and_selects_the_new_voice(tmp_path):
+    http = FakeHttp(replies={'/v1/voices/add': (200, {'voice_id': 'newVoice123', 'requires_verification': False})})
+    client, _ = await start_app(tmp_path, http=http)
+    try:
+        response = await client.post('/api/voices/clone', data=clone_form())
+
+        assert response.status == 200
+        assert await response.json() == {'voice_id': 'newVoice123'}
+        assert (await (await client.get('/api/settings')).json())['voice_id'] == 'newVoice123'
+
+        request = http.requests[0]
+        assert (request['method'], request['url']) == ('POST', 'https://api.elevenlabs.io/v1/voices/add')
+        assert request['headers'] == {'xi-api-key': 'k2'}
+        fields = request['data']._fields  # (disposition, headers, value) per form field
+        assert [(field[0]['name'], field[0].get('filename')) for field in fields] == [
+            ('files', 'mau-0.wav'), ('files', 'mau-1.wav'), ('name', None),
+        ]
+        assert [field[2].getvalue() for field in fields[:2]] == [b'RIFF-sample-1', b'RIFF-sample-2']
+        assert fields[2][2] == 'Giọng của tôi'
+    finally:
+        await client.close()
+
+
+async def test_cloning_needs_a_name_and_at_least_one_sample(tmp_path):
+    http = FakeHttp()
+    client, _ = await start_app(tmp_path, http=http)
+    try:
+        assert (await client.post('/api/voices/clone', data=clone_form(name=None))).status == 400
+        assert (await client.post('/api/voices/clone', data=clone_form(samples=()))).status == 400
+        assert (await client.post('/api/voices/clone', json={'name': 'x'})).status == 400
+        assert http.requests == [], 'nothing reaches ElevenLabs'
+    finally:
+        await client.close()
+
+
+async def test_cloning_refuses_oversized_uploads(tmp_path):
+    http = FakeHttp()
+    client, _ = await start_app(tmp_path, http=http)
+    try:
+        too_big = clone_form(samples=(bytes(11 * 1024 * 1024),))
+
+        assert (await client.post('/api/voices/clone', data=too_big)).status == 413
+        assert http.requests == []
+    finally:
+        await client.close()
+
+
+async def test_a_refused_clone_reports_why_and_keeps_the_current_voice(tmp_path):
+    http = FakeHttp(replies={'/v1/voices/add': (401, {'detail': {'message': 'Your plan does not include voice cloning.'}})})
+    client, _ = await start_app(tmp_path, http=http)
+    try:
+        response = await client.post('/api/voices/clone', data=clone_form())
+
+        assert response.status == 502
+        assert 'does not include voice cloning' in await response.text()
+        assert (await (await client.get('/api/settings')).json())['voice_id'] == 'v1'
+    finally:
+        await client.close()

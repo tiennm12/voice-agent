@@ -73,6 +73,56 @@
             <span class="hint">Phát nguyên văn ngay khi nhấc máy.</span>
             <textarea name="greeting" rows="3" maxlength="500"></textarea>
           </label>
+
+          <fieldset>
+            <legend>Tình trạng và giờ làm việc</legend>
+            <label>Tình trạng hiện tại
+              <select name="status">
+                <option value="normal">Bình thường</option>
+                <option value="meeting">Đang họp</option>
+              </select>
+            </label>
+            <label>Câu chào khi đang họp
+              <textarea name="meeting_greeting" rows="2" maxlength="500"></textarea>
+            </label>
+            <label class="inline">
+              <input type="checkbox" name="use_work_hours" /> Dùng câu chào riêng ngoài giờ làm việc
+            </label>
+            <div id="workHours">
+              <div class="days" role="group" aria-label="Ngày làm việc">
+                <label class="inline"><input type="checkbox" name="work_day" value="1" /> T2</label>
+                <label class="inline"><input type="checkbox" name="work_day" value="2" /> T3</label>
+                <label class="inline"><input type="checkbox" name="work_day" value="3" /> T4</label>
+                <label class="inline"><input type="checkbox" name="work_day" value="4" /> T5</label>
+                <label class="inline"><input type="checkbox" name="work_day" value="5" /> T6</label>
+                <label class="inline"><input type="checkbox" name="work_day" value="6" /> T7</label>
+                <label class="inline"><input type="checkbox" name="work_day" value="7" /> CN</label>
+              </div>
+              <div class="hours">
+                <label class="inline">Từ <input type="time" name="work_from" /></label>
+                <label class="inline">đến <input type="time" name="work_to" /></label>
+              </div>
+              <label>Câu chào ngoài giờ
+                <textarea name="after_hours_greeting" rows="2" maxlength="500"></textarea>
+              </label>
+            </div>
+          </fieldset>
+
+          <fieldset>
+            <legend>Giọng nói và ngôn ngữ</legend>
+            <label>Giọng của trợ lý
+              <select name="voice_id"></select>
+            </label>
+            <audio id="voicePreview" controls preload="none" aria-label="Nghe thử giọng đang chọn" hidden></audio>
+            <label>Ngôn ngữ
+              <span class="hint">Tự nhận diện cho phép trả lời bằng tiếng Anh, nhưng nghe tiếng Việt có thể kém chính xác hơn.</span>
+              <select name="language">
+                <option value="vi">Tiếng Việt</option>
+                <option value="auto">Theo người gọi (tự nhận diện)</option>
+              </select>
+            </label>
+          </fieldset>
+
           <label>Hướng dẫn cho trợ lý (system prompt)
             <span class="hint">Viết {{OWNER_NAME}} ở chỗ cần tên chủ máy. Quy tắc tự cúp máy do hệ thống thêm vào.</span>
             <textarea name="system_doc" rows="16" maxlength="8000"></textarea>
@@ -86,6 +136,26 @@
             <button type="button" id="resetSettings">Khôi phục mặc định</button>
             <span class="status" id="settingsStatus" role="status"></span>
           </div>
+        </form>
+
+        <form class="settings" id="cloneForm">
+          <fieldset>
+            <legend>Tạo giọng từ bản ghi âm của bạn</legend>
+            <p class="hint">
+              Tải lên 1-3 đoạn ghi âm rõ tiếng (tổng dưới 10MB). Chỉ dùng giọng của chính bạn hoặc của người đã
+              đồng ý. Giọng được tạo trên ElevenLabs (cần gói có Instant Voice Cloning) và sẽ được chọn ngay.
+            </p>
+            <label>Tên giọng
+              <input name="name" maxlength="60" required />
+            </label>
+            <label>File ghi âm
+              <input name="files" type="file" accept="audio/*" multiple required />
+            </label>
+            <div class="buttons">
+              <button>Tạo giọng</button>
+              <span class="status" id="cloneStatus" role="status"></span>
+            </div>
+          </fieldset>
         </form>
       </section>
     </main>

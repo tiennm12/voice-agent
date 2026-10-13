@@ -2,17 +2,19 @@
 // Rendering of a single call lives in call-view.js.
 
 const PAGE_SIZE = 30;
-const TEXT_SETTINGS = ['owner_name', 'greeting', 'system_doc'];
+const TEXT_SETTINGS = ['owner_name', 'greeting', 'meeting_greeting', 'after_hours_greeting', 'system_doc'];
+const CHOICE_SETTINGS = ['status', 'language'];
 
 let calls = [];
 let filter = '';
 let openCallId = null;
 
-async function api(path, { method = 'GET', body } = {}) {
+// `body` is sent as JSON; `form` (a FormData, for file uploads) is sent as it is.
+async function api(path, { method = 'GET', body, form } = {}) {
   const response = await fetch(path, {
     method,
     headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
-    body: body === undefined ? undefined : JSON.stringify(body),
+    body: body === undefined ? form : JSON.stringify(body),
   });
   if (response.status === 401) {
     location.href = '/login'; // the session expired
@@ -172,10 +174,73 @@ document.getElementById('statsBy').addEventListener('change', loadStats);
 
 // --- settings ---------------------------------------------------------------
 
+// What the schedule inputs show while no schedule is saved.
+const DEFAULT_WORK_HOURS = { days: [1, 2, 3, 4, 5], from: '08:00', to: '17:30' };
+
 function fillSettings(settings) {
   const form = document.getElementById('settingsForm');
-  for (const name of TEXT_SETTINGS) form.elements[name].value = settings[name];
+  for (const name of TEXT_SETTINGS.concat(CHOICE_SETTINGS)) form.elements[name].value = settings[name];
   form.elements.blocked_numbers.value = settings.blocked_numbers.join('\n');
+
+  const hours = settings.work_hours || DEFAULT_WORK_HOURS;
+  form.elements.use_work_hours.checked = Boolean(settings.work_hours);
+  for (const box of form.elements.work_day) box.checked = hours.days.includes(Number(box.value));
+  form.elements.work_from.value = hours.from;
+  form.elements.work_to.value = hours.to;
+  showWorkHours();
+
+  selectVoice(settings.voice_id);
+}
+
+function showWorkHours() {
+  const form = document.getElementById('settingsForm');
+  document.getElementById('workHours').hidden = !form.elements.use_work_hours.checked;
+}
+
+function readSettings() {
+  const form = document.getElementById('settingsForm');
+  const values = Object.fromEntries(TEXT_SETTINGS.concat(CHOICE_SETTINGS).map((name) => [name, form.elements[name].value]));
+  values.blocked_numbers = form.elements.blocked_numbers.value.split('\n');
+  values.voice_id = form.elements.voice_id.value || null;
+  values.work_hours = form.elements.use_work_hours.checked
+    ? {
+      days: [...form.elements.work_day].filter((box) => box.checked).map((box) => Number(box.value)),
+      from: form.elements.work_from.value,
+      to: form.elements.work_to.value,
+    }
+    : null;
+  return values;
+}
+
+// The voice list comes from ElevenLabs and can fail on its own: the saved voice must
+// stay selectable (and saveable) either way.
+function selectVoice(voiceId) {
+  const select = document.getElementById('settingsForm').elements.voice_id;
+  if (![...select.options].some((option) => option.value === voiceId)) {
+    select.append(new Option(`Giọng đang dùng (${voiceId})`, voiceId));
+  }
+  select.value = voiceId;
+  showVoicePreview();
+}
+
+function showVoicePreview() {
+  const select = document.getElementById('settingsForm').elements.voice_id;
+  const preview = document.getElementById('voicePreview');
+  const url = select.selectedOptions[0] && select.selectedOptions[0].dataset.preview;
+  preview.hidden = !url;
+  if (url) preview.src = url;
+}
+
+async function loadVoices() {
+  const select = document.getElementById('settingsForm').elements.voice_id;
+  const { voices, current } = await api('/api/voices');
+  select.replaceChildren(...voices.map((voice) => {
+    const labels = Object.values(voice.labels).join(', ');
+    const option = new Option(labels ? `${voice.name} (${labels})` : voice.name, voice.voice_id);
+    if (voice.preview_url) option.dataset.preview = voice.preview_url;
+    return option;
+  }));
+  selectVoice(current);
 }
 
 async function loadSettings() {
@@ -184,6 +249,12 @@ async function loadSettings() {
     setStatus('settingsStatus', '');
   } catch (err) {
     setStatus('settingsStatus', `Không tải được cài đặt: ${err.message}`, true);
+    return;
+  }
+  try {
+    await loadVoices();
+  } catch (err) {
+    setStatus('settingsStatus', `Không tải được danh sách giọng: ${err.message}`, true);
   }
 }
 
@@ -198,15 +269,28 @@ async function saveSettings(values, done) {
 
 document.getElementById('settingsForm').addEventListener('submit', (event) => {
   event.preventDefault();
-  const form = event.currentTarget;
-  const values = Object.fromEntries(TEXT_SETTINGS.map((name) => [name, form.elements[name].value]));
-  values.blocked_numbers = form.elements.blocked_numbers.value.split('\n');
-  saveSettings(values, 'Đã lưu. Áp dụng từ cuộc gọi kế tiếp.');
+  saveSettings(readSettings(), 'Đã lưu. Áp dụng từ cuộc gọi kế tiếp.');
 });
 document.getElementById('resetSettings').addEventListener('click', () => {
   // The blocked list is the owner's data, not a default to restore: it is left alone.
-  const defaults = Object.fromEntries(TEXT_SETTINGS.map((name) => [name, null]));
-  saveSettings(defaults, 'Đã khôi phục mặc định.');
+  const names = TEXT_SETTINGS.concat(CHOICE_SETTINGS, ['work_hours', 'voice_id']);
+  saveSettings(Object.fromEntries(names.map((name) => [name, null])), 'Đã khôi phục mặc định.');
+});
+document.getElementById('settingsForm').elements.use_work_hours.addEventListener('change', showWorkHours);
+document.getElementById('settingsForm').elements.voice_id.addEventListener('change', showVoicePreview);
+
+document.getElementById('cloneForm').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  setStatus('cloneStatus', 'Đang tạo giọng, có thể mất một phút…');
+  try {
+    await api('/api/voices/clone', { method: 'POST', form: new FormData(form) });
+    form.reset();
+    await loadVoices();
+    setStatus('cloneStatus', 'Đã tạo và chọn giọng mới. Áp dụng từ cuộc gọi kế tiếp.');
+  } catch (err) {
+    setStatus('cloneStatus', `Không tạo được giọng: ${err.message}`, true);
+  }
 });
 
 window.addEventListener('hashchange', showSection);

@@ -14,11 +14,12 @@ from openai import AsyncOpenAI
 from .api import setup_api
 from .auth import make_call_link, session_secret, setup_auth
 from .call_record import CallRecord, purge_old_calls
-from .config import build_system_prompt, effective_settings, load_config
+from .config import build_system_prompt, load_config
 from .db import Database
 from .llm_client import stream_completion
 from .realtime_stt_client import RealtimeSttClient
 from .session_orchestrator import SessionOrchestrator
+from .settings import effective_settings, pick_greeting
 from .telegram import TelegramNotifier
 from .tts_client import AUDIO_FORMATS, TtsClient
 
@@ -103,11 +104,14 @@ def create_app(config, *, ws_connect=None, openai_client=None, http=None):
                 record.add_transcript(message['role'], message['text'])
             outbox.put_nowait(message)
 
+        # Read per call, so what the owner saves in the dashboard applies from the next call on.
+        settings = effective_settings(config, db.get_settings())
         stt = RealtimeSttClient(
             api_key=config.openai_api_key,
             model=config.openai_realtime_model,
             transcribe_model=config.openai_transcribe_model,
             ws_connect=upstream['ws_connect'],
+            language=None if settings['language'] == 'auto' else settings['language'],
         )
         stt.on('usage', record.add_stt_usage)
         # The bridge page asks for 'pcm'; anything unrecognized gets the mic page's MP3.
@@ -116,20 +120,18 @@ def create_app(config, *, ws_connect=None, openai_client=None, http=None):
             audio = 'mp3'
         tts = TtsClient(
             api_key=config.elevenlabs_api_key,
-            voice_id=config.elevenlabs_voice_id,
+            voice_id=settings['voice_id'],
             model_id=config.elevenlabs_model_id,
             ws_connect=upstream['ws_connect'],
             audio=audio,
         )
-        # Read per call, so what the owner saves in the dashboard applies from the next call on.
-        settings = effective_settings(config, db.get_settings())
         orchestrator = SessionOrchestrator(
-            system_prompt=build_system_prompt(settings['system_doc'], settings['owner_name']),
+            system_prompt=build_system_prompt(settings['system_doc'], settings['owner_name'], settings['language']),
             stt_client=stt,
             llm_stream=partial(stream_completion, upstream['openai'], on_usage=record.add_llm_usage),
             tts_client=tts,
             session_id=session_id,
-            greeting=settings['greeting'],
+            greeting=pick_greeting(settings, record.started_at),
             send_control=send_control,
             send_audio=outbox.put_nowait,
             on_hangup=lambda: outbox.put_nowait(None),
@@ -178,7 +180,7 @@ def create_app(config, *, ws_connect=None, openai_client=None, http=None):
     app.cleanup_ctx.append(lifetime)
     app.on_response_prepare.append(forbid_stale_copies)
     setup_auth(app, config.dashboard_password, PUBLIC_DIR / 'login.html')
-    setup_api(app, db, config, PUBLIC_DIR)
+    setup_api(app, db, config, PUBLIC_DIR, upstream)
     app.router.add_get('/', index)
     app.router.add_get('/ws', call)
     app.router.add_static('/', PUBLIC_DIR)

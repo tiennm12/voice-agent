@@ -99,16 +99,37 @@ class FakeOpenai:
 class FakeHttp:
     """Stands in for aiohttp.ClientSession.post(); records (url, json) per request."""
 
-    def __init__(self, status=200, error=None):
+    def __init__(self, status=200, error=None, replies=None):
         self.status = status
         self.error = error
+        self.replies = replies or {}  # URL fragment -> (status, JSON body) for requests that need an answer
         self.posts = []
+        self.requests = []  # every request in full: {'method', 'url', and the keyword arguments}
 
     def post(self, url, json=None, **kwargs):
         self.posts.append((url, json))
+        return self._request('POST', url, json=json, **kwargs)
+
+    def get(self, url, **kwargs):
+        return self._request('GET', url, **kwargs)
+
+    def _request(self, method, url, **kwargs):
+        self.requests.append({'method': method, 'url': url, **kwargs})
         if self.error:
             raise self.error
-        return self
+        for fragment, (status, body) in self.replies.items():
+            if fragment in url:
+                return FakeHttpResponse(status, body)
+        return FakeHttpResponse(self.status, None)
+
+    async def close(self):
+        pass
+
+
+class FakeHttpResponse:
+    def __init__(self, status, body):
+        self.status = status
+        self._body = body
 
     async def __aenter__(self):
         return self
@@ -116,11 +137,11 @@ class FakeHttp:
     async def __aexit__(self, *exc):
         return False
 
-    async def text(self):
-        return 'telegram says no'
+    async def json(self, **kwargs):
+        return self._body
 
-    async def close(self):
-        pass
+    async def text(self):
+        return json.dumps(self._body) if self._body is not None else 'telegram says no'
 
 
 class FakeUpstream:

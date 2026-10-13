@@ -160,3 +160,16 @@ async def test_emits_the_transcription_usage_for_cost_tracking():
     await tick()
 
     assert usages == [usage]
+
+
+async def test_without_a_language_the_transcription_is_left_to_detect_it():
+    ws = FakeWs()
+    ws_connect, _ = fake_ws_connect(ws)
+    client = RealtimeSttClient(
+        api_key='sk-test', model='gpt-realtime-2.1', transcribe_model='gpt-4o-transcribe', ws_connect=ws_connect,
+        language=None,
+    )
+
+    await client.connect()
+
+    assert ws.sent[0]['session']['audio']['input']['transcription'] == {'model': 'gpt-4o-transcribe'}

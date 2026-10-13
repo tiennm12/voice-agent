@@ -8,6 +8,9 @@
 
 * { box-sizing: border-box; }
 
+/* The hidden attribute loses to any author `display` rule (e.g. on audio below) unless it is restated. */
+[hidden] { display: none !important; }
+
 body {
   font-family: system-ui, sans-serif;
   margin: 0;
@@ -136,4 +139,11 @@ form.settings input, form.settings textarea {
 }
 form.settings textarea { resize: vertical; }
 form.settings .hint { display: block; font-weight: 400; font-size: 13px; color: var(--muted); }
+form.settings select { display: block; margin-top: 4px; padding: 6px 8px; max-width: 100%; }
+form.settings fieldset { border: 1px solid var(--line); border-radius: 6px; margin: 0 0 14px; padding: 10px 14px 0; }
+form.settings legend { font-weight: 600; padding: 0 6px; }
+form.settings label.inline { display: inline-flex; align-items: center; gap: 6px; margin-right: 14px; font-weight: 400; }
+form.settings label.inline input { display: inline-block; width: auto; margin: 0; }
+form.settings audio { display: block; margin-bottom: 14px; }
+#cloneForm { margin-top: 24px; }
 form.settings .buttons { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }

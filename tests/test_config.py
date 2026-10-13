@@ -2,9 +2,7 @@ from datetime import timedelta
 
 import pytest
 
-from voice_agent.config import (
-    HANGUP_MARKER, build_messages, build_system_prompt, effective_settings, load_config,
-)
+from voice_agent.config import HANGUP_MARKER, build_messages, build_system_prompt, load_config
 
 from fakes import REQUIRED_ENV
 
@@ -63,12 +61,11 @@ def test_build_system_prompt_fills_in_the_owner_name_and_appends_the_hangup_rule
     assert HANGUP_MARKER in prompt
 
 
-def test_load_config_builds_the_voicemail_greeting_from_the_owner_name():
+def test_load_config_keeps_the_owner_name_and_the_raw_system_document_as_defaults():
     config = load_config(env={**REQUIRED_ENV, 'OWNER_NAME': 'anh Tuấn'}, read_system_doc=lambda: 'Của {{OWNER_NAME}}')
-    settings = effective_settings(config, {})
-    assert settings['owner_name'] == 'anh Tuấn'
-    assert settings['greeting'] == 'Chào bạn, anh Tuấn hiện không thể nghe máy. Mình là trợ lý AI, bạn cần nhắn gì không ạ?'
-    assert 'Của anh Tuấn' in build_system_prompt(settings['system_doc'], settings['owner_name'])
+    assert config.owner_name == 'anh Tuấn'
+    assert config.system_doc == 'Của {{OWNER_NAME}}'
+    assert 'Của anh Tuấn' in build_system_prompt(config.system_doc, config.owner_name)
 
 
 def test_load_config_voicemail_settings_default_to_a_generic_owner_and_no_telegram(tmp_path):
@@ -128,11 +125,15 @@ def test_load_config_retention_and_clock_offset_defaults_and_overrides():
     assert config.tz.utcoffset(None) == timedelta(hours=9)
 
 
-def test_saved_settings_override_the_defaults_one_key_at_a_time():
-    config = load_config(env={**REQUIRED_ENV, 'OWNER_NAME': 'anh Tuấn'}, read_system_doc=lambda: 'doc')
+def test_the_system_prompt_can_tell_the_llm_to_answer_in_the_callers_language():
+    vietnamese_only = build_system_prompt('doc')
+    follow_caller = build_system_prompt('doc', language='auto')
 
-    settings = effective_settings(config, {'greeting': 'Alo.', 'system_doc': 'Khác.'})
-
-    assert settings == {
-        'owner_name': 'anh Tuấn', 'greeting': 'Alo.', 'system_doc': 'Khác.', 'blocked_numbers': [],
-    }
+    assert 'trả lời bằng tiếng Việt' in vietnamese_only
+    assert 'trả lời bằng tiếng Việt' not in follow_caller
+    assert HANGUP_MARKER in follow_caller
+    # A soft hint lost against a Vietnamese persona and greeting (the LLM kept answering in
+    # Vietnamese), so the rule is stated last and names the case that matters.
+    last_line = follow_caller.splitlines()[-1]
+    assert 'ngôn ngữ người gọi' in last_line and 'tiếng Anh' in last_line
+    assert vietnamese_only.splitlines()[-1] != last_line

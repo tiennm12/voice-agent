@@ -39,9 +39,12 @@ class Config:
         return timezone(timedelta(hours=self.utc_offset_hours))
 
 
-def build_system_prompt(document_text, owner_name='chủ máy'):
-    return '\n'.join([
-        'Bạn là trợ lý gọi điện thoại, trả lời bằng tiếng Việt, ngắn gọn, tự nhiên như đang nói chuyện.',
+def build_system_prompt(document_text, owner_name='chủ máy', language='vi'):
+    """language 'vi' pins replies to Vietnamese; 'auto' follows whatever the caller speaks."""
+    vietnamese_only = language == 'vi'
+    lines = [
+        f"Bạn là trợ lý gọi điện thoại, {'trả lời bằng tiếng Việt, ' if vietnamese_only else 'trả lời '}"
+        'ngắn gọn, tự nhiên như đang nói chuyện.',
         'Dựa vào tài liệu tham khảo dưới đây để trả lời; nếu không chắc chắn, nói rõ là bạn không có thông tin đó, không bịa.',
         '---',
         document_text.strip().replace('{{OWNER_NAME}}', owner_name),
@@ -50,22 +53,15 @@ def build_system_prompt(document_text, owner_name='chủ máy'):
         f'Khi cuộc trò chuyện đã xong (bạn đã ghi nhận lời nhắn và chào tạm biệt, hoặc người gọi chào tạm biệt), '
         f'hãy kết thúc câu trả lời cuối cùng đó bằng đúng chuỗi {HANGUP_MARKER} để hệ thống cúp máy. '
         f'Không dùng {HANGUP_MARKER} hay dấu ngoặc vuông ở bất kỳ lúc nào khác.',
-    ])
-
-
-def greeting_for(owner_name):
-    return f'Chào bạn, {owner_name} hiện không thể nghe máy. Mình là trợ lý AI, bạn cần nhắn gì không ạ?'
-
-
-def effective_settings(config, stored):
-    """What a call actually uses: the owner's saved settings, with the defaults filling the gaps."""
-    owner_name = stored.get('owner_name') or config.owner_name
-    return {
-        'owner_name': owner_name,
-        'greeting': stored.get('greeting') or greeting_for(owner_name),
-        'system_doc': stored.get('system_doc') or config.system_doc,
-        'blocked_numbers': stored.get('blocked_numbers') or [],
-    }
+    ]
+    if not vietnamese_only:
+        # Stated last and bluntly: against a Vietnamese document and a Vietnamese greeting,
+        # a milder hint in the first line was ignored.
+        lines.append(
+            'QUAN TRỌNG: luôn trả lời bằng đúng ngôn ngữ người gọi vừa dùng. Người gọi nói tiếng Anh thì trả lời '
+            'hoàn toàn bằng tiếng Anh, dù tài liệu này và câu chào viết bằng tiếng Việt.'
+        )
+    return '\n'.join(lines)
 
 
 def build_messages(system_prompt, history, new_user_text):

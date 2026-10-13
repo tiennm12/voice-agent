@@ -1,20 +1,24 @@
+import asyncio
+import io
 import json
+import logging
 import re
 import secrets
 from datetime import datetime
 from functools import partial
 
+import aiohttp
 from aiohttp import web
 
 from .call_record import SPAM
-from .config import effective_settings
+from .settings import MAX_NUMBER_DIGITS, clean_setting, effective_settings, normalize_number
+
+log = logging.getLogger(__name__)
 
 # The shape CallRecord gives its ids. Anything else never reaches the database or the disk.
 CALL_ID = re.compile(r'\d{8}T\d{6}_[0-9a-f]{8}')
-# Editable text settings and their maximum length.
-TEXT_SETTINGS = {'owner_name': 80, 'greeting': 500, 'system_doc': 8000}
-MAX_BLOCKED_NUMBERS = 500
-MAX_NUMBER_DIGITS = 20
+MAX_CLONE_BYTES = 10 * 1024 * 1024  # all voice samples of one upload together
+MAX_VOICE_NAME = 60
 
 json_response = partial(web.json_response, dumps=partial(json.dumps, ensure_ascii=False))
 
@@ -26,48 +30,21 @@ async def read_json(request):
         raise web.HTTPBadRequest(text='body must be JSON')
 
 
-def normalize_number(text):
-    """One spelling per phone number, so '+84 901 234 567' and '0901234567' compare equal.
+def refusal(status, body):
+    """ElevenLabs' own words for why a call failed (e.g. a key without the needed permission), for the owner to read."""
+    detail = body.get('detail') if isinstance(body, dict) else None
+    reason = detail.get('message') if isinstance(detail, dict) else detail
+    return str(reason or status or 'không kết nối được')[:300]
 
-    ponytail: knows Vietnam's +84 prefix only. Use a phone-number library if callers ever come from elsewhere.
+
+def setup_api(app, db, config, public_dir, upstream):
+    """The dashboard's JSON API. Every route sits behind the session middleware.
+
+    `upstream` is the server's dict of shared clients; its 'http' session exists once the app has started.
     """
-    digits = re.sub(r'\D', '', text)
-    if digits.startswith('84') and len(digits) >= 11:
-        digits = '0' + digits[2:]
-    return digits
 
-
-def clean_blocked_numbers(value):
-    if not isinstance(value, list) or len(value) > MAX_BLOCKED_NUMBERS:
-        raise web.HTTPBadRequest(text=f'blocked_numbers must be a list of at most {MAX_BLOCKED_NUMBERS} numbers')
-    numbers = []
-    for entry in value:
-        if not isinstance(entry, str):
-            raise web.HTTPBadRequest(text='blocked_numbers must contain text only')
-        number = normalize_number(entry)
-        if len(number) > MAX_NUMBER_DIGITS:
-            raise web.HTTPBadRequest(text=f'not a phone number: {entry[:40]}')
-        if number and number not in numbers:
-            numbers.append(number)
-    return numbers or None
-
-
-def clean_setting(key, value):
-    """A setting as it will be stored; None means back to the default. Raises 400 on anything unexpected."""
-    if value is None or value == '':
-        if key in TEXT_SETTINGS or key == 'blocked_numbers':
-            return None
-    elif key == 'blocked_numbers':
-        return clean_blocked_numbers(value)
-    elif key in TEXT_SETTINGS:
-        if not isinstance(value, str) or len(value) > TEXT_SETTINGS[key]:
-            raise web.HTTPBadRequest(text=f'{key} must be text of at most {TEXT_SETTINGS[key]} characters')
-        return value.strip() or None
-    raise web.HTTPBadRequest(text=f'unknown setting: {key}')
-
-
-def setup_api(app, db, config, public_dir):
-    """The dashboard's JSON API. Every route sits behind the session middleware."""
+    def current_settings():
+        return effective_settings(config, db.get_settings())
 
     def call_or_404(request):
         call_id = request.match_info['id']
@@ -75,6 +52,20 @@ def setup_api(app, db, config, public_dir):
         if call is None:
             raise web.HTTPNotFound()
         return call
+
+    async def elevenlabs(method, path, **kwargs):
+        """One ElevenLabs REST call: (status, parsed body), or (None, None) when it could not be reached."""
+        send = upstream['http'].get if method == 'GET' else upstream['http'].post
+        try:
+            async with send(
+                f'https://api.elevenlabs.io{path}', headers={'xi-api-key': config.elevenlabs_api_key}, **kwargs,
+            ) as response:
+                return response.status, await response.json(content_type=None)
+        except (aiohttp.ClientError, OSError, asyncio.TimeoutError, ValueError) as err:
+            log.error('elevenlabs %s %s failed: %s', method, path, type(err).__name__)
+            return None, None
+
+    # --- calls -------------------------------------------------------------
 
     async def list_calls(request):
         try:
@@ -106,6 +97,10 @@ def setup_api(app, db, config, public_dir):
         # the guessed one is 'audio/vnd.wave', which not every player recognizes.
         return web.FileResponse(recording, headers={'Content-Type': 'audio/wav'})
 
+    async def listen_page(request):
+        # One call on a page of its own, for call links; the page fetches the call itself.
+        return web.FileResponse(public_dir / 'listen.html')
+
     async def get_stats(request):
         by = request.query.get('by', 'day')
         try:
@@ -113,15 +108,21 @@ def setup_api(app, db, config, public_dir):
         except ValueError:
             raise web.HTTPBadRequest(text='by must be day, week or month')
 
+    # --- settings ----------------------------------------------------------
+
     async def get_settings(request):
-        return json_response(effective_settings(config, db.get_settings()))
+        return json_response(current_settings())
 
     async def put_settings(request):
         body = await read_json(request)
         if not isinstance(body, dict):
             raise web.HTTPBadRequest(text='body must be an object')
-        db.set_settings({key: clean_setting(key, value) for key, value in body.items()})
-        return json_response(effective_settings(config, db.get_settings()))
+        try:
+            changes = {key: clean_setting(key, value) for key, value in body.items()}
+        except ValueError as err:
+            raise web.HTTPBadRequest(text=str(err))
+        db.set_settings(changes)
+        return json_response(current_settings())
 
     async def check_blocked(request):
         """Asked by the bridge page before it answers. A blocked caller is logged, never picked up."""
@@ -129,7 +130,7 @@ def setup_api(app, db, config, public_dir):
         if not isinstance(body, dict):
             raise web.HTTPBadRequest(text='body must be an object')
         caller = normalize_number(str(body.get('caller') or ''))[:MAX_NUMBER_DIGITS]
-        if not caller or caller not in effective_settings(config, db.get_settings())['blocked_numbers']:
+        if not caller or caller not in current_settings()['blocked_numbers']:
             return json_response({'blocked': False})
         now = datetime.now(config.tz)
         session_id = secrets.token_hex(4)
@@ -142,9 +143,55 @@ def setup_api(app, db, config, public_dir):
         db.mark_read(call_id)  # nothing to read: it must not show up as an unread call
         return json_response({'blocked': True})
 
-    async def listen_page(request):
-        # One call on a page of its own, for call links; the page fetches the call itself.
-        return web.FileResponse(public_dir / 'listen.html')
+    # --- voices ------------------------------------------------------------
+
+    async def list_voices(request):
+        # ponytail: the first 100 voices only (one page). Follow next_page_token if an account ever has more.
+        status, body = await elevenlabs('GET', '/v2/voices', params={'page_size': '100'}, timeout=aiohttp.ClientTimeout(total=10))
+        if status != 200:
+            raise web.HTTPBadGateway(text=f'ElevenLabs không trả danh sách giọng: {refusal(status, body)}')
+        voices = [
+            {
+                'voice_id': voice['voice_id'],
+                'name': voice.get('name') or voice['voice_id'],
+                'category': voice.get('category'),
+                'labels': voice.get('labels') or {},
+                'preview_url': voice.get('preview_url'),
+            }
+            for voice in body.get('voices', [])
+        ]
+        return json_response({'current': current_settings()['voice_id'], 'voices': voices})
+
+    async def clone_voice(request):
+        """Sends the owner's voice samples to ElevenLabs and makes the resulting voice the agent's."""
+        if not request.content_type.startswith('multipart/'):
+            raise web.HTTPBadRequest(text='upload must be multipart/form-data')
+        form = aiohttp.FormData()
+        name, samples, size = None, 0, 0
+        async for part in await request.multipart():
+            if part.name == 'name':
+                name = (await part.text()).strip()[:MAX_VOICE_NAME]
+            elif part.name == 'files' and part.filename:
+                sample = bytearray()
+                while chunk := await part.read_chunk():
+                    size += len(chunk)
+                    if size > MAX_CLONE_BYTES:
+                        raise web.HTTPRequestEntityTooLarge(max_size=MAX_CLONE_BYTES, actual_size=size)
+                    sample.extend(chunk)
+                form.add_field(
+                    'files', io.BytesIO(sample), filename=part.filename,
+                    content_type=part.headers.get('Content-Type', 'application/octet-stream'),
+                )
+                samples += 1
+        if not name or not samples:
+            raise web.HTTPBadRequest(text='cần tên giọng và ít nhất một file mẫu')
+        form.add_field('name', name)
+
+        status, body = await elevenlabs('POST', '/v1/voices/add', data=form, timeout=aiohttp.ClientTimeout(total=120))
+        if status != 200 or not isinstance(body, dict) or not body.get('voice_id'):
+            raise web.HTTPBadGateway(text=f'ElevenLabs từ chối tạo giọng: {refusal(status, body)}')
+        db.set_settings({'voice_id': clean_setting('voice_id', body['voice_id'])})
+        return json_response({'voice_id': body['voice_id']})
 
     app.router.add_get('/c/{id}', listen_page)
     app.router.add_get('/api/calls', list_calls)
@@ -155,3 +202,5 @@ def setup_api(app, db, config, public_dir):
     app.router.add_get('/api/settings', get_settings)
     app.router.add_put('/api/settings', put_settings)
     app.router.add_post('/api/blocked', check_blocked)
+    app.router.add_get('/api/voices', list_voices)
+    app.router.add_post('/api/voices/clone', clone_voice)
