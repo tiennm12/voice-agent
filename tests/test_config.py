@@ -2,7 +2,9 @@ from datetime import timedelta
 
 import pytest
 
-from voice_agent.config import HANGUP_MARKER, build_messages, build_system_prompt, load_config
+from voice_agent.config import (
+    HANGUP_MARKER, build_messages, build_system_prompt, effective_settings, load_config,
+)
 
 from fakes import REQUIRED_ENV
 
@@ -25,7 +27,7 @@ def test_load_config_applies_defaults_for_optional_env_vars():
     assert config.openai_transcribe_model == 'gpt-4o-transcribe'
     assert config.elevenlabs_model_id == 'eleven_flash_v2_5'
     assert config.port == 3000
-    assert 'doc text' in config.system_prompt
+    assert config.system_doc == 'doc text'
 
 
 def test_load_config_uses_the_injected_read_system_doc_function():
@@ -63,9 +65,10 @@ def test_build_system_prompt_fills_in_the_owner_name_and_appends_the_hangup_rule
 
 def test_load_config_builds_the_voicemail_greeting_from_the_owner_name():
     config = load_config(env={**REQUIRED_ENV, 'OWNER_NAME': 'anh Tuấn'}, read_system_doc=lambda: 'Của {{OWNER_NAME}}')
-    assert config.owner_name == 'anh Tuấn'
-    assert config.greeting == 'Chào bạn, anh Tuấn hiện không thể nghe máy. Mình là trợ lý AI, bạn cần nhắn gì không ạ?'
-    assert 'Của anh Tuấn' in config.system_prompt
+    settings = effective_settings(config, {})
+    assert settings['owner_name'] == 'anh Tuấn'
+    assert settings['greeting'] == 'Chào bạn, anh Tuấn hiện không thể nghe máy. Mình là trợ lý AI, bạn cần nhắn gì không ạ?'
+    assert 'Của anh Tuấn' in build_system_prompt(settings['system_doc'], settings['owner_name'])
 
 
 def test_load_config_voicemail_settings_default_to_a_generic_owner_and_no_telegram(tmp_path):
@@ -94,8 +97,9 @@ def test_load_config_hangup_timing_is_tunable_per_deployment():
 
 def test_the_shipped_system_doc_and_pricing_table_load():
     config = load_config(env=REQUIRED_ENV)
-    assert '{{OWNER_NAME}}' not in config.system_prompt
-    assert 'chủ máy' in config.system_prompt
+    system_prompt = build_system_prompt(config.system_doc, config.owner_name)
+    assert '{{OWNER_NAME}}' not in system_prompt
+    assert 'chủ máy' in system_prompt
     for rate in (
         config.pricing['llm']['input_per_1m_tokens'],
         config.pricing['llm']['output_per_1m_tokens'],
@@ -122,3 +126,11 @@ def test_load_config_retention_and_clock_offset_defaults_and_overrides():
     )
     assert config.retention_days == 60
     assert config.tz.utcoffset(None) == timedelta(hours=9)
+
+
+def test_saved_settings_override_the_defaults_one_key_at_a_time():
+    config = load_config(env={**REQUIRED_ENV, 'OWNER_NAME': 'anh Tuấn'}, read_system_doc=lambda: 'doc')
+
+    settings = effective_settings(config, {'greeting': 'Alo.', 'system_doc': 'Khác.'})
+
+    assert settings == {'owner_name': 'anh Tuấn', 'greeting': 'Alo.', 'system_doc': 'Khác.'}

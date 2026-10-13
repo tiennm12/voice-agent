@@ -2,20 +2,91 @@
 <html lang="vi">
   <head>
     <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Voice Agent</title>
-    <style>
-      body { font-family: sans-serif; max-width: 480px; margin: 40px auto; }
-      #status { font-weight: bold; }
-      #transcript { margin-top: 16px; border-top: 1px solid #ccc; padding-top: 8px; }
-      button { font-size: 16px; padding: 8px 16px; margin-right: 8px; }
-    </style>
+    <link rel="stylesheet" href="app.css" />
   </head>
   <body>
-    <h1>Voice Agent</h1>
-    <p>Trạng thái: <span id="status">idle</span></p>
-    <button id="startButton">Bắt đầu gọi</button>
-    <button id="endButton">Kết thúc</button>
-    <div id="transcript"></div>
-    <script src="client.js"></script>
+    <header class="topbar">
+      <h1>Voice Agent</h1>
+      <nav aria-label="Mục chính">
+        <a href="#inbox">Hộp thư</a>
+        <a href="#stats">Thống kê</a>
+        <a href="#settings">Cài đặt</a>
+      </nav>
+      <a href="call.html">Gọi thử</a>
+      <a href="bridge.html">Cầu nối tổng đài</a>
+      <form method="post" action="/logout"><button>Đăng xuất</button></form>
+    </header>
+
+    <main>
+      <section id="inbox" aria-label="Hộp thư">
+        <div class="filters" role="group" aria-label="Lọc cuộc gọi">
+          <button data-filter="" aria-pressed="true">Tất cả</button>
+          <button data-filter="unread" aria-pressed="false">Chưa đọc</button>
+          <button data-filter="urgent" aria-pressed="false">Khẩn cấp</button>
+          <button data-filter="spam" aria-pressed="false">Spam</button>
+        </div>
+        <div class="inbox">
+          <div>
+            <ul class="calls" id="calls"></ul>
+            <p class="status" id="inboxStatus" role="status"></p>
+            <button id="moreCalls" hidden>Xem thêm</button>
+          </div>
+          <div id="callDetail"><p class="muted">Chọn một cuộc gọi để xem tóm tắt, nghe ghi âm và đọc nội dung.</p></div>
+        </div>
+      </section>
+
+      <section id="stats" aria-label="Thống kê" hidden>
+        <p>
+          <label>Thống kê theo
+            <select id="statsBy">
+              <option value="day">ngày</option>
+              <option value="week">tuần</option>
+              <option value="month">tháng</option>
+            </select>
+          </label>
+        </p>
+        <table class="stats">
+          <thead>
+            <tr>
+              <th>Kỳ</th>
+              <th class="number">Cuộc gọi</th>
+              <th aria-hidden="true"></th>
+              <th class="number">Khẩn cấp</th>
+              <th class="number">Spam</th>
+              <th class="number">Chi phí</th>
+            </tr>
+          </thead>
+          <tbody id="statsRows"></tbody>
+        </table>
+        <p class="status" id="statsStatus" role="status"></p>
+      </section>
+
+      <section id="settings" aria-label="Cài đặt" hidden>
+        <form class="settings" id="settingsForm">
+          <label>Tên chủ máy
+            <span class="hint">Trợ lý dùng tên này khi nói với người gọi, ví dụ "anh Tuấn".</span>
+            <input name="owner_name" maxlength="80" />
+          </label>
+          <label>Câu chào
+            <span class="hint">Phát nguyên văn ngay khi nhấc máy.</span>
+            <textarea name="greeting" rows="3" maxlength="500"></textarea>
+          </label>
+          <label>Hướng dẫn cho trợ lý (system prompt)
+            <span class="hint">Viết {{OWNER_NAME}} ở chỗ cần tên chủ máy. Quy tắc tự cúp máy do hệ thống thêm vào.</span>
+            <textarea name="system_doc" rows="16" maxlength="8000"></textarea>
+          </label>
+          <div class="buttons">
+            <button>Lưu</button>
+            <button type="button" id="resetSettings">Khôi phục mặc định</button>
+            <span class="status" id="settingsStatus" role="status"></span>
+          </div>
+        </form>
+      </section>
+    </main>
+
+    <script src="call-view.js"></script>
+    <script src="dashboard.js"></script>
   </body>
 </html>

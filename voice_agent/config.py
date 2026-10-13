@@ -21,8 +21,7 @@ class Config:
     elevenlabs_model_id: str
     port: int
     owner_name: str
-    greeting: str
-    system_prompt: str
+    system_doc: str
     telegram_bot_token: str | None
     telegram_chat_id: str | None
     data_dir: Path
@@ -52,6 +51,20 @@ def build_system_prompt(document_text, owner_name='chủ máy'):
     ])
 
 
+def greeting_for(owner_name):
+    return f'Chào bạn, {owner_name} hiện không thể nghe máy. Mình là trợ lý AI, bạn cần nhắn gì không ạ?'
+
+
+def effective_settings(config, stored):
+    """What a call actually uses: the owner's saved settings, with the defaults filling the gaps."""
+    owner_name = stored.get('owner_name') or config.owner_name
+    return {
+        'owner_name': owner_name,
+        'greeting': stored.get('greeting') or greeting_for(owner_name),
+        'system_doc': stored.get('system_doc') or config.system_doc,
+    }
+
+
 def build_messages(system_prompt, history, new_user_text):
     return [
         {'role': 'system', 'content': system_prompt},
@@ -74,7 +87,6 @@ def load_config(env=None, read_system_doc=_read_system_doc, read_pricing=_read_p
         if not env.get(key):
             raise ValueError(f'Missing required env var: {key}')
 
-    owner_name = env.get('OWNER_NAME') or 'chủ máy'
     return Config(
         openai_api_key=env['OPENAI_API_KEY'],
         openai_realtime_model=env.get('OPENAI_REALTIME_MODEL') or 'gpt-realtime-2.1',
@@ -83,9 +95,9 @@ def load_config(env=None, read_system_doc=_read_system_doc, read_pricing=_read_p
         elevenlabs_voice_id=env['ELEVENLABS_VOICE_ID'],
         elevenlabs_model_id=env.get('ELEVENLABS_MODEL_ID') or 'eleven_flash_v2_5',
         port=int(env.get('PORT') or 3000),
-        owner_name=owner_name,
-        greeting=f'Chào bạn, {owner_name} hiện không thể nghe máy. Mình là trợ lý AI, bạn cần nhắn gì không ạ?',
-        system_prompt=build_system_prompt(read_system_doc(), owner_name),
+        # owner_name and system_doc are only the defaults: the dashboard's settings override them per call.
+        owner_name=env.get('OWNER_NAME') or 'chủ máy',
+        system_doc=read_system_doc(),
         # Both optional: without them the call is still recorded, just not pushed anywhere.
         telegram_bot_token=env.get('TELEGRAM_BOT_TOKEN') or None,
         telegram_chat_id=env.get('TELEGRAM_CHAT_ID') or None,

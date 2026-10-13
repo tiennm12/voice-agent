@@ -1,0 +1,139 @@
+:root {
+  --line: #d9dde3;
+  --muted: #5d6673;
+  --accent: #0b5cad;
+  --urgent: #b00020;
+  --surface: #f5f7fa;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  font-family: system-ui, sans-serif;
+  margin: 0;
+  color: #1b1f24;
+  line-height: 1.45;
+}
+
+a { color: var(--accent); }
+
+button, select, input, textarea { font: inherit; }
+
+button {
+  padding: 6px 14px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+  cursor: pointer;
+}
+
+button:hover { background: var(--surface); }
+
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.topbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 20px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+.topbar h1 { font-size: 18px; margin: 0; }
+.topbar nav { display: flex; gap: 14px; flex: 1; }
+.topbar nav a { text-decoration: none; padding: 4px 0; }
+.topbar nav a[aria-current='page'] { font-weight: 600; border-bottom: 2px solid var(--accent); }
+.topbar form { margin: 0; }
+
+main { max-width: 1100px; margin: 0 auto; padding: 16px; }
+
+.muted { color: var(--muted); }
+.status { min-height: 1.45em; color: var(--muted); }
+.status.error { color: var(--urgent); }
+
+/* --- inbox --- */
+
+.filters { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+.filters button[aria-pressed='true'] { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+.inbox { display: grid; gap: 20px; }
+@media (min-width: 800px) { .inbox { grid-template-columns: minmax(280px, 380px) 1fr; } }
+
+.calls { list-style: none; margin: 0; padding: 0; }
+
+.call-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 2px 10px;
+  width: 100%;
+  text-align: left;
+  padding: 10px 12px;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+}
+
+.call-row[aria-current='true'] { background: var(--surface); }
+.call-row .who { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.call-row .when { color: var(--muted); font-size: 13px; white-space: nowrap; }
+.call-row .snippet {
+  grid-column: 1 / -1;
+  color: var(--muted);
+  font-size: 14px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.call-row.unread .who { font-weight: 700; }
+.call-row.unread .who::before { content: '● '; color: var(--accent); }
+.call-row.spam { opacity: 0.6; }
+
+.badge {
+  display: inline-block;
+  padding: 0 8px;
+  border-radius: 10px;
+  font-size: 12px;
+  border: 1px solid var(--line);
+  color: var(--muted);
+}
+.badge.urgent { background: var(--urgent); border-color: var(--urgent); color: #fff; }
+
+/* --- one call --- */
+
+.call-view h2 { margin: 0 0 4px; font-size: 20px; }
+.call-view .meta { margin: 0 0 12px; color: var(--muted); }
+.call-view dl { margin: 0 0 12px; display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; }
+.call-view dt { color: var(--muted); }
+.call-view dd { margin: 0; }
+.call-view audio { width: 100%; margin-bottom: 12px; }
+.call-view .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+
+.transcript { list-style: none; margin: 0 0 12px; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.bubble { max-width: 80%; padding: 8px 12px; border-radius: 14px; background: var(--surface); }
+.bubble.user { align-self: flex-start; border-bottom-left-radius: 4px; }
+.bubble.assistant { align-self: flex-end; border-bottom-right-radius: 4px; background: #e3effb; }
+.bubble .speaker { display: block; font-size: 12px; color: var(--muted); }
+
+/* --- stats --- */
+
+table.stats { border-collapse: collapse; width: 100%; }
+table.stats th, table.stats td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--line); }
+table.stats td.number, table.stats th.number { text-align: right; white-space: nowrap; }
+.bar { height: 10px; min-width: 2px; background: var(--accent); border-radius: 5px; }
+
+/* --- settings --- */
+
+form.settings label { display: block; margin-bottom: 14px; font-weight: 600; }
+form.settings input, form.settings textarea {
+  display: block;
+  width: 100%;
+  margin-top: 4px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font-weight: 400;
+}
+form.settings textarea { resize: vertical; }
+form.settings .hint { display: block; font-weight: 400; font-size: 13px; color: var(--muted); }
+form.settings .buttons { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }

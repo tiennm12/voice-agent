@@ -139,6 +139,17 @@ async def test_serves_the_browser_client_with_script_content_types(served):
         assert 'javascript' in script.headers['Content-Type'], path
 
 
+async def test_browsers_must_revalidate_pages_and_never_store_api_answers(served, anonymous):
+    client, _ = served
+
+    # Without this a browser keeps showing a cached page after a deploy — or after logout.
+    for path in ('/', '/client.js', '/login'):
+        assert (await client.get(path)).headers['Cache-Control'] == 'no-cache', path
+    assert (await client.get('/api/calls')).headers['Cache-Control'] == 'no-store'
+    redirect = await anonymous.get('/', allow_redirects=False)
+    assert redirect.headers['Cache-Control'] == 'no-cache'
+
+
 async def test_does_not_serve_files_outside_public(served):
     client, _ = served
 

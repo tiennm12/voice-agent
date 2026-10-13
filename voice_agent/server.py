@@ -2,7 +2,6 @@ import asyncio
 import contextlib
 import json
 import logging
-import mimetypes
 import uuid
 from functools import partial
 from pathlib import Path
@@ -12,9 +11,10 @@ from aiohttp import web
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
 
+from .api import setup_api
 from .auth import setup_auth
 from .call_record import CallRecord, purge_old_calls
-from .config import load_config
+from .config import build_system_prompt, effective_settings, load_config
 from .db import Database
 from .llm_client import stream_completion
 from .realtime_stt_client import RealtimeSttClient
@@ -25,9 +25,6 @@ log = logging.getLogger(__name__)
 
 PUBLIC_DIR = Path(__file__).resolve().parent.parent / 'public'
 
-# Windows resolves .js through the registry, which on some machines says text/plain —
-# and AudioWorklet.addModule() refuses anything that isn't a JavaScript MIME type.
-mimetypes.add_type('text/javascript', '.js')
 
 
 DB = web.AppKey('db', Database)
@@ -110,13 +107,15 @@ def create_app(config, *, ws_connect=None, openai_client=None):
             ws_connect=upstream['ws_connect'],
             audio=audio,
         )
+        # Read per call, so what the owner saves in the dashboard applies from the next call on.
+        settings = effective_settings(config, db.get_settings())
         orchestrator = SessionOrchestrator(
-            system_prompt=config.system_prompt,
+            system_prompt=build_system_prompt(settings['system_doc'], settings['owner_name']),
             stt_client=stt,
             llm_stream=partial(stream_completion, upstream['openai'], on_usage=record.add_llm_usage),
             tts_client=tts,
             session_id=session_id,
-            greeting=config.greeting,
+            greeting=settings['greeting'],
             send_control=send_control,
             send_audio=outbox.put_nowait,
             on_hangup=lambda: outbox.put_nowait(None),
@@ -158,10 +157,17 @@ def create_app(config, *, ws_connect=None, openai_client=None):
         )
         return browser_ws
 
+    async def forbid_stale_copies(request, response):
+        # With no Cache-Control a browser caches pages and scripts on a guess, and keeps
+        # showing them after a deploy or a logout. API answers hold call data: never stored.
+        response.headers.setdefault('Cache-Control', 'no-store' if request.path.startswith('/api/') else 'no-cache')
+
     app = web.Application()
     app[DB] = db
     app.cleanup_ctx.append(lifetime)
+    app.on_response_prepare.append(forbid_stale_copies)
     setup_auth(app, config.dashboard_password, PUBLIC_DIR / 'login.html')
+    setup_api(app, db, config)
     app.router.add_get('/', index)
     app.router.add_get('/ws', call)
     app.router.add_static('/', PUBLIC_DIR)
