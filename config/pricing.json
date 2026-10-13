@@ -1,0 +1,17 @@
+{
+  "_note": "USD. Giá tham khảo ngày 2026-10-13 từ developers.openai.com/api/docs/pricing và elevenlabs.io/pricing/api — sửa theo gói đang dùng. llm = gpt-4.1-mini (hội thoại + tóm tắt). stt = gpt-4o-transcribe; audio_input suy ra từ mức ước tính $0.006/phút của OpenAI. tts = ElevenLabs Flash. usd_to_vnd = tỷ giá tham khảo, đặt null để bỏ dòng VND.",
+  "llm": {
+    "input_per_1m_tokens": 0.40,
+    "output_per_1m_tokens": 1.60
+  },
+  "stt": {
+    "audio_input_per_1m_tokens": 6.00,
+    "text_input_per_1m_tokens": 2.50,
+    "output_per_1m_tokens": 10.00,
+    "per_minute": 0.006
+  },
+  "tts": {
+    "per_1k_characters": 0.04
+  },
+  "usd_to_vnd": 26400
+}

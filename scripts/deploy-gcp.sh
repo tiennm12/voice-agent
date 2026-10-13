@@ -6,12 +6,11 @@ set -e
 REPO_URL="https://github.com/tiennm12/voice-agent.git"
 APP_DIR="$HOME/voice-agent"
 
-echo "== Installing Node.js 20.x =="
-if ! command -v node >/dev/null || [ "$(node -v | grep -oE '^v[0-9]+' | tr -d v)" -lt 18 ]; then
-  curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
-  sudo apt-get install -y nodejs
-fi
-node -v
+echo "== Installing Python (needs 3.11+) =="
+sudo apt-get update
+sudo apt-get install -y python3 python3-venv
+python3 --version
+python3 -c 'import sys; sys.exit("!! Python 3.11+ required" if sys.version_info < (3, 11) else 0)'
 
 echo "== Installing git =="
 sudo apt-get install -y git
@@ -33,7 +32,8 @@ else
   git clone "$REPO_URL" "$APP_DIR"
 fi
 cd "$APP_DIR"
-npm install
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
 
 if [ ! -f "$APP_DIR/.env" ]; then
   cp "$APP_DIR/.env.example" "$APP_DIR/.env"
@@ -54,7 +54,7 @@ After=network.target
 Type=simple
 User=$USER
 WorkingDirectory=$APP_DIR
-ExecStart=$(command -v node) src/server.js
+ExecStart=$APP_DIR/.venv/bin/python -m voice_agent.server
 Restart=on-failure
 RestartSec=2
 

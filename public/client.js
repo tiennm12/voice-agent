@@ -6,12 +6,27 @@ let sourceBuffer;
 let audioEl;
 let pendingChunks = [];
 
-async function startCall() {
+// Plays the agent's MP3 stream through an <audio> element (see startPlaybackStream).
+const mp3Player = { play: appendAudioChunk, stop: stopPlaybackStream };
+// What plays the agent's voice in the current call: { play(arrayBuffer), stop() }.
+let player = mp3Player;
+let onCallEnded = null;
+
+// With no options this is a browser-mic call. The bridge page (bridge.js) passes:
+//   inputStream  the caller's audio, used instead of the microphone
+//   meta         { caller, pbxSessionId } reported to the server for the call record
+//   audio        format to ask the server for ('pcm'), paired with a player that takes it
+//   player       { play(arrayBuffer), stop() } replacing the built-in MP3 player
+//   onEnded      called once the call has ended, whoever ended it
+async function startCall({ inputStream, meta, audio, player: callPlayer, onEnded } = {}) {
   try {
+    player.stop(); // drop whatever a previous call left queued
+    player = callPlayer || mp3Player;
+    onCallEnded = onEnded || null;
     audioContext = new AudioContext({ sampleRate: 24000 });
     await audioContext.audioWorklet.addModule('pcm-encoder-processor.js');
 
-    micStream = await navigator.mediaDevices.getUserMedia({
+    micStream = inputStream || await navigator.mediaDevices.getUserMedia({
       audio: {
         channelCount: 1,
         echoCancellation: true,
@@ -31,23 +46,36 @@ async function startCall() {
     encoderNode.connect(silentGain).connect(audioContext.destination);
 
     const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    socket = new WebSocket(`${wsProtocol}//${location.host}/ws`);
-    socket.binaryType = 'arraybuffer';
+    const callSocket = new WebSocket(`${wsProtocol}//${location.host}/ws${audio ? `?audio=${audio}` : ''}`);
+    callSocket.binaryType = 'arraybuffer';
+    socket = callSocket;
+    // A socket the page has moved on from (call ended, maybe a new one started) can
+    // still deliver events for a moment: they must not touch the current call.
+    const isCurrent = () => socket === callSocket;
 
     encoderNode.port.onmessage = (event) => {
-      if (socket.readyState === WebSocket.OPEN) {
-        socket.send(event.data);
+      if (callSocket.readyState === WebSocket.OPEN) {
+        callSocket.send(event.data);
       }
     };
 
-    socket.addEventListener('open', () => setStatus('listening'));
-    socket.addEventListener('close', () => setStatus('idle'));
-    socket.addEventListener('error', () => {
+    callSocket.addEventListener('open', () => {
+      setStatus('listening');
+      if (meta) callSocket.send(JSON.stringify({ type: 'callMeta', ...meta }));
+    });
+    callSocket.addEventListener('close', () => {
+      if (isCurrent()) releaseCall();
+    });
+    callSocket.addEventListener('error', () => {
+      if (!isCurrent()) return;
       setStatus('error');
       appendTranscript('error', 'Không thể kết nối.');
     });
-    socket.addEventListener('message', handleServerMessage);
+    callSocket.addEventListener('message', (event) => {
+      if (isCurrent()) handleServerMessage(event);
+    });
   } catch (err) {
+    releaseCall(); // also tells the embedding page (onEnded) that this call is not happening
     setStatus('error');
     const micPermissionErrors = ['NotAllowedError', 'PermissionDeniedError', 'NotFoundError', 'SecurityError'];
     if (err && micPermissionErrors.includes(err.name)) {
@@ -58,12 +86,23 @@ async function startCall() {
   }
 }
 
+// The user ends the call: cut the agent off mid-sentence too.
 function stopCall() {
+  player.stop();
+  releaseCall();
+}
+
+// Ends the call from our side, or tidies up after the agent hung up. Audio already
+// received keeps playing, so a goodbye isn't clipped by the hangup that follows it.
+function releaseCall() {
   if (socket) socket.close();
+  socket = null;
   if (micStream) micStream.getTracks().forEach((track) => track.stop());
-  if (audioContext) audioContext.close();
-  stopPlaybackStream();
+  if (audioContext && audioContext.state !== 'closed') audioContext.close();
   setStatus('idle');
+  const onEnded = onCallEnded;
+  onCallEnded = null;
+  if (onEnded) onEnded();
 }
 
 function setStatus(status) {
@@ -116,10 +155,10 @@ function handleServerMessage(event) {
     if (msg.type === 'transcript') appendTranscript(msg.role || 'user', msg.text);
     if (msg.type === 'state') setStatus(msg.state);
     if (msg.type === 'error') appendTranscript('error', msg.message);
-    if (msg.type === 'interrupt') stopPlaybackStream();
+    if (msg.type === 'interrupt') player.stop();
     return;
   }
-  appendAudioChunk(event.data);
+  player.play(event.data);
 }
 
 function appendTranscript(role, text) {
@@ -130,5 +169,6 @@ function appendTranscript(role, text) {
   el.appendChild(line);
 }
 
-document.getElementById('startButton').addEventListener('click', startCall);
-document.getElementById('endButton').addEventListener('click', stopCall);
+// Not passed directly as the listener: startCall would take the click Event as its options.
+document.getElementById('startButton')?.addEventListener('click', () => startCall());
+document.getElementById('endButton')?.addEventListener('click', stopCall);

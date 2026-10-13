@@ -1,0 +1,153 @@
+import asyncio
+import contextlib
+import json
+import logging
+import mimetypes
+import uuid
+from functools import partial
+from pathlib import Path
+
+import aiohttp
+from aiohttp import web
+from dotenv import load_dotenv
+from openai import AsyncOpenAI
+
+from .call_record import CallRecord
+from .config import load_config
+from .llm_client import stream_completion
+from .realtime_stt_client import RealtimeSttClient
+from .session_orchestrator import SessionOrchestrator
+from .tts_client import AUDIO_FORMATS, TtsClient
+
+log = logging.getLogger(__name__)
+
+PUBLIC_DIR = Path(__file__).resolve().parent.parent / 'public'
+
+# Windows resolves .js through the registry, which on some machines says text/plain —
+# and AudioWorklet.addModule() refuses anything that isn't a JavaScript MIME type.
+mimetypes.add_type('text/javascript', '.js')
+
+
+def create_app(config, *, ws_connect=None, openai_client=None):
+    """ws_connect / openai_client default to the real upstreams; tests pass fakes."""
+    upstream = {}
+
+    async def upstream_clients(app):
+        upstream['http'] = aiohttp.ClientSession()
+        upstream['ws_connect'] = ws_connect or upstream['http'].ws_connect
+        upstream['openai'] = openai_client or AsyncOpenAI(api_key=config.openai_api_key)
+        yield
+        await upstream['http'].close()
+        await upstream['openai'].close()
+
+    async def index(request):
+        return web.FileResponse(PUBLIC_DIR / 'index.html')
+
+    async def call(request):
+        browser_ws = web.WebSocketResponse()
+        await browser_ws.prepare(request)
+        # Short id to correlate one call's log lines in a multi-call server log.
+        session_id = uuid.uuid4().hex[:8]
+        record = CallRecord(session_id=session_id, data_dir=config.data_dir, pricing=config.pricing)
+
+        # One queue + one sender per call keeps control messages and audio in the
+        # order the orchestrator produced them. None means: the agent hangs up.
+        outbox = asyncio.Queue()
+
+        async def send_outbox():
+            with contextlib.suppress(ConnectionError):  # browser gone; the receive loop ends the call
+                while (item := await outbox.get()) is not None:
+                    if isinstance(item, bytes):
+                        await browser_ws.send_bytes(item)
+                    else:
+                        await browser_ws.send_str(json.dumps(item, ensure_ascii=False))
+                await browser_ws.close()
+
+        def send_control(message):
+            if message['type'] == 'transcript':
+                record.add_transcript(message['role'], message['text'])
+            outbox.put_nowait(message)
+
+        stt = RealtimeSttClient(
+            api_key=config.openai_api_key,
+            model=config.openai_realtime_model,
+            transcribe_model=config.openai_transcribe_model,
+            ws_connect=upstream['ws_connect'],
+        )
+        stt.on('usage', record.add_stt_usage)
+        # The bridge page asks for 'pcm'; anything unrecognized gets the mic page's MP3.
+        audio = request.query.get('audio')
+        if audio not in AUDIO_FORMATS:
+            audio = 'mp3'
+        tts = TtsClient(
+            api_key=config.elevenlabs_api_key,
+            voice_id=config.elevenlabs_voice_id,
+            model_id=config.elevenlabs_model_id,
+            ws_connect=upstream['ws_connect'],
+            audio=audio,
+        )
+        orchestrator = SessionOrchestrator(
+            system_prompt=config.system_prompt,
+            stt_client=stt,
+            llm_stream=partial(stream_completion, upstream['openai'], on_usage=record.add_llm_usage),
+            tts_client=tts,
+            session_id=session_id,
+            greeting=config.greeting,
+            send_control=send_control,
+            send_audio=outbox.put_nowait,
+            on_hangup=lambda: outbox.put_nowait(None),
+            silence_timeout=config.silence_timeout,
+            max_call=config.max_call,
+        )
+
+        log.info('[%s] [server] new call connected', session_id)
+        sender = asyncio.create_task(send_outbox())
+        try:
+            try:
+                await orchestrator.start()
+            except Exception:
+                log.exception('[%s] [server] failed to start session', session_id)
+                with contextlib.suppress(ConnectionError):
+                    await browser_ws.send_str(json.dumps(
+                        {'type': 'error', 'message': 'Không thể kết nối tới dịch vụ giọng nói.'}, ensure_ascii=False,
+                    ))
+            else:
+                async for msg in browser_ws:
+                    if msg.type is aiohttp.WSMsgType.BINARY:
+                        record.write_audio(msg.data)
+                        await orchestrator.handle_audio_chunk(msg.data)
+                    elif msg.type is aiohttp.WSMsgType.TEXT:
+                        record.set_caller(msg.data)
+        finally:
+            log.info('[%s] [server] call ended', session_id)
+            orchestrator.stop()
+            sender.cancel()
+            record.usage['tts_characters'] = tts.characters_sent
+            record.close()  # the call is on disk before anything below can fail
+
+        await browser_ws.close()
+        await record.summarize_and_notify(
+            openai_client=upstream['openai'],
+            http=upstream['http'],
+            telegram_bot_token=config.telegram_bot_token,
+            telegram_chat_id=config.telegram_chat_id,
+        )
+        return browser_ws
+
+    app = web.Application()
+    app.cleanup_ctx.append(upstream_clients)
+    app.router.add_get('/', index)
+    app.router.add_get('/ws', call)
+    app.router.add_static('/', PUBLIC_DIR)
+    return app
+
+
+def main():
+    load_dotenv()
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
+    config = load_config()
+    web.run_app(create_app(config), port=config.port)
+
+
+if __name__ == '__main__':
+    main()

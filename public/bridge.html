@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="utf-8" />
+    <title>Voice Agent — cầu nối eTelecom</title>
+    <style>
+      body { font-family: sans-serif; max-width: 480px; margin: 40px auto; }
+      label { display: block; margin-bottom: 8px; }
+      input { font-size: 16px; padding: 4px 8px; width: 100%; box-sizing: border-box; }
+      #sipStatus, #status { font-weight: bold; }
+      #transcript { margin-top: 16px; border-top: 1px solid #ccc; padding-top: 8px; }
+      button { font-size: 16px; padding: 8px 16px; margin-right: 8px; }
+    </style>
+  </head>
+  <body>
+    <h1>Cầu nối tổng đài eTelecom</h1>
+    <p>Giữ tab này mở: cuộc gọi vào máy nhánh sẽ được trợ lý AI tự nhấc máy.</p>
+    <form id="loginForm">
+      <label>Máy nhánh <input id="extension" required autocomplete="username" /></label>
+      <label>Mật khẩu <input id="password" type="password" required autocomplete="current-password" /></label>
+      <label>Tenant domain <input id="domain" required placeholder="voip.example.com" /></label>
+      <button id="loginButton">Đăng nhập máy nhánh</button>
+    </form>
+    <p>Máy nhánh: <span id="sipStatus">chưa đăng nhập</span></p>
+    <p>Cuộc gọi: <span id="status">idle</span></p>
+    <button id="endButton">Kết thúc cuộc gọi</button>
+    <div id="transcript"></div>
+    <audio id="remoteAudio" muted autoplay></audio>
+    <script src="client.js"></script>
+    <script type="module" src="bridge.js"></script>
+  </body>
+</html>
