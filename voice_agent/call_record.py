@@ -1,9 +1,10 @@
 import json
 import logging
 import re
+import shutil
 import wave
 from collections import Counter
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import aiohttp
@@ -46,18 +47,31 @@ def compute_cost(usage, pricing):
     return cost
 
 
+def purge_old_calls(db, data_dir, retention_days, tz):
+    """Deletes calls older than retention_days, recordings included. Returns the purged ids."""
+    cutoff = datetime.now(tz) - timedelta(days=retention_days)
+    purged = db.delete_older_than(cutoff.isoformat())
+    for call_id in purged:
+        if Path(call_id).name == call_id and call_id not in ('.', '..'):  # an id is one path segment, never a path
+            shutil.rmtree(Path(data_dir) / 'calls' / call_id, ignore_errors=True)
+    return purged
+
+
 class CallRecord:
     """Everything kept about one call: caller audio, transcript, usage, summary, cost.
 
-    Lives in <data_dir>/calls/<start time>_<session id>/ as caller.wav + call.json.
+    The recording lives in <data_dir>/calls/<id>/caller.wav; everything else is a row in the database.
     """
 
-    def __init__(self, *, session_id, data_dir, pricing):
+    def __init__(self, *, session_id, data_dir, pricing, db, tz):
         self._pricing = pricing
+        self._db = db
+        self._tz = tz
         self.session_id = session_id
-        self.started_at = datetime.now().astimezone()
+        self.started_at = datetime.now(tz)
         self.ended_at = None
-        self.dir = Path(data_dir) / 'calls' / f'{self.started_at:%Y%m%dT%H%M%S}_{session_id}'
+        self.id = f'{self.started_at:%Y%m%dT%H%M%S}_{session_id}'
+        self.dir = Path(data_dir) / 'calls' / self.id
         self.dir.mkdir(parents=True)
         self.caller = None
         self.pbx_session_id = None
@@ -77,7 +91,7 @@ class CallRecord:
         self._wav.writeframesraw(data)
 
     def add_transcript(self, role, text):
-        self.transcript.append({'role': role, 'text': text, 'at': datetime.now().astimezone().isoformat()})
+        self.transcript.append({'role': role, 'text': text, 'at': datetime.now(self._tz).isoformat()})
 
     def set_caller(self, raw):
         """Takes the client's callMeta text frame. Untrusted input: keep only what looks like a phone number."""
@@ -106,8 +120,8 @@ class CallRecord:
         self.usage['stt_output_tokens'] += usage.get('output_tokens', 0)
 
     def close(self):
-        """Synchronous on purpose: runs even when the call is torn down by cancellation."""
-        self.ended_at = datetime.now().astimezone()
+        """Ends the record and saves it. Synchronous on purpose: runs even when the call is torn down by cancellation."""
+        self.ended_at = datetime.now(self._tz)
         self._wav.close()
         self._save()
 
@@ -175,17 +189,20 @@ class CallRecord:
                 log.error('[%s] telegram sendMessage failed: %s %s', self.session_id, response.status, (await response.text())[:300])
 
     def _save(self):
-        record = {
-            'id': self.dir.name,
+        summary = self.summary or {}
+        self._db.save_call({
+            'id': self.id,
             'session_id': self.session_id,
             'caller': self.caller,
             'pbx_session_id': self.pbx_session_id,
             'started_at': self.started_at.isoformat(),
-            'ended_at': self.ended_at.isoformat() if self.ended_at else None,
-            'read': False,
+            'ended_at': self.ended_at.isoformat(),
+            'duration_seconds': round((self.ended_at - self.started_at).total_seconds()),
+            'caller_name': summary.get('caller_name'),
+            'summary': summary.get('summary'),
+            'urgency': summary.get('urgency'),
+            'category': summary.get('category'),
             'transcript': self.transcript,
-            'summary': self.summary,
             'usage': dict(self.usage),
             'cost': self.cost,
-        }
-        (self.dir / 'call.json').write_text(json.dumps(record, ensure_ascii=False, indent=2), encoding='utf-8')
+        })

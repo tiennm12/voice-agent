@@ -3,6 +3,15 @@ import json
 from types import SimpleNamespace
 
 from aiohttp import WSMessage, WSMsgType
+from aiohttp.test_utils import TestClient, TestServer
+
+PASSWORD = 'correct horse battery staple'
+REQUIRED_ENV = {
+    'OPENAI_API_KEY': 'k1',
+    'ELEVENLABS_API_KEY': 'k2',
+    'ELEVENLABS_VOICE_ID': 'v1',
+    'DASHBOARD_PASSWORD': PASSWORD,
+}
 
 
 async def tick(times=5):
@@ -109,3 +118,46 @@ class FakeHttp:
 
     async def text(self):
         return 'telegram says no'
+
+
+class FakeUpstream:
+    """Hands the server fake STT/TTS sockets and a fake OpenAI client."""
+
+    def __init__(self, stt_error=None, **openai_kwargs):
+        self.stt_error = stt_error
+        self.openai = FakeOpenai(**openai_kwargs)
+        self.stt = FakeWs()
+        self.tts = []  # one socket per spoken turn
+        self.tts_urls = []
+
+    async def ws_connect(self, url, headers=None):
+        if 'api.openai.com' in url:
+            if self.stt_error:
+                raise self.stt_error
+            return self.stt
+        self.tts_urls.append(url)
+        self.tts.append(FakeWs())
+        return self.tts[-1]
+
+    async def tts_socket(self, index=0):
+        """The TTS socket of the index-th spoken turn, once its text has been sent in full."""
+        async with asyncio.timeout(2):
+            # sent = [init message, text chunk(s)..., end-of-turn '']
+            while len(self.tts) <= index or self.tts[index].sent[-1:] != [{'text': ''}]:
+                await asyncio.sleep(0.005)
+        return self.tts[index]
+
+
+async def start_app(tmp_path, upstream=None, login=True, **env):
+    """A running app on fake upstreams. Returns (client, upstream); the client is logged in unless login=False."""
+    from voice_agent.config import load_config
+    from voice_agent.server import create_app
+
+    upstream = upstream or FakeUpstream()
+    config = load_config(env={**REQUIRED_ENV, 'DATA_DIR': str(tmp_path), **env}, read_system_doc=lambda: 'doc')
+    client = TestClient(TestServer(create_app(config, ws_connect=upstream.ws_connect, openai_client=upstream.openai)))
+    await client.start_server()
+    if login:
+        response = await client.post('/login', data={'password': PASSWORD}, allow_redirects=False)
+        assert response.status == 302, 'test login failed'
+    return client, upstream

@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Đăng nhập — Voice Agent</title>
+    <style>
+      /* Self-contained: every other file on this server needs a session to load. */
+      body { font-family: sans-serif; max-width: 320px; margin: 80px auto; padding: 0 16px; }
+      label { display: block; margin-bottom: 12px; }
+      input { font-size: 16px; padding: 6px 8px; width: 100%; box-sizing: border-box; margin-top: 4px; }
+      button { font-size: 16px; padding: 8px 16px; }
+      #error { color: #b00020; }
+    </style>
+  </head>
+  <body>
+    <h1>Voice Agent</h1>
+    <form method="post" action="/login">
+      <label>Mật khẩu
+        <input name="password" type="password" required autofocus autocomplete="current-password" />
+      </label>
+      <p id="error" role="alert" hidden>Sai mật khẩu.</p>
+      <button>Đăng nhập</button>
+    </form>
+    <script>
+      document.getElementById('error').hidden = !location.search.includes('error');
+    </script>
+  </body>
+</html>

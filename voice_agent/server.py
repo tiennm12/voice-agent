@@ -12,8 +12,10 @@ from aiohttp import web
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
 
-from .call_record import CallRecord
+from .auth import setup_auth
+from .call_record import CallRecord, purge_old_calls
 from .config import load_config
+from .db import Database
 from .llm_client import stream_completion
 from .realtime_stt_client import RealtimeSttClient
 from .session_orchestrator import SessionOrchestrator
@@ -28,17 +30,37 @@ PUBLIC_DIR = Path(__file__).resolve().parent.parent / 'public'
 mimetypes.add_type('text/javascript', '.js')
 
 
+DB = web.AppKey('db', Database)
+PURGE_INTERVAL = 24 * 3600
+
+
 def create_app(config, *, ws_connect=None, openai_client=None):
     """ws_connect / openai_client default to the real upstreams; tests pass fakes."""
     upstream = {}
+    config.data_dir.mkdir(parents=True, exist_ok=True)
+    db = Database(config.data_dir / 'voicemail.db')
 
-    async def upstream_clients(app):
+    def purge():
+        purged = purge_old_calls(db, config.data_dir, config.retention_days, config.tz)
+        if purged:
+            log.info('[server] purged %d call(s) older than %g days', len(purged), config.retention_days)
+
+    async def purge_daily():
+        while True:
+            await asyncio.sleep(PURGE_INTERVAL)
+            purge()
+
+    async def lifetime(app):
         upstream['http'] = aiohttp.ClientSession()
         upstream['ws_connect'] = ws_connect or upstream['http'].ws_connect
         upstream['openai'] = openai_client or AsyncOpenAI(api_key=config.openai_api_key)
+        purge()
+        purging = asyncio.create_task(purge_daily())
         yield
+        purging.cancel()
         await upstream['http'].close()
         await upstream['openai'].close()
+        db.close()
 
     async def index(request):
         return web.FileResponse(PUBLIC_DIR / 'index.html')
@@ -48,7 +70,9 @@ def create_app(config, *, ws_connect=None, openai_client=None):
         await browser_ws.prepare(request)
         # Short id to correlate one call's log lines in a multi-call server log.
         session_id = uuid.uuid4().hex[:8]
-        record = CallRecord(session_id=session_id, data_dir=config.data_dir, pricing=config.pricing)
+        record = CallRecord(
+            session_id=session_id, data_dir=config.data_dir, pricing=config.pricing, db=db, tz=config.tz,
+        )
 
         # One queue + one sender per call keeps control messages and audio in the
         # order the orchestrator produced them. None means: the agent hangs up.
@@ -135,7 +159,9 @@ def create_app(config, *, ws_connect=None, openai_client=None):
         return browser_ws
 
     app = web.Application()
-    app.cleanup_ctx.append(upstream_clients)
+    app[DB] = db
+    app.cleanup_ctx.append(lifetime)
+    setup_auth(app, config.dashboard_password, PUBLIC_DIR / 'login.html')
     app.router.add_get('/', index)
     app.router.add_get('/ws', call)
     app.router.add_static('/', PUBLIC_DIR)

@@ -1,6 +1,7 @@
 import json
 import os
 from dataclasses import dataclass
+from datetime import timedelta, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -28,6 +29,13 @@ class Config:
     pricing: dict
     silence_timeout: float
     max_call: float
+    dashboard_password: str
+    retention_days: float
+    utc_offset_hours: float
+
+    @property
+    def tz(self):
+        return timezone(timedelta(hours=self.utc_offset_hours))
 
 
 def build_system_prompt(document_text, owner_name='chủ máy'):
@@ -62,7 +70,7 @@ def _read_pricing():
 
 def load_config(env=None, read_system_doc=_read_system_doc, read_pricing=_read_pricing):
     env = os.environ if env is None else env
-    for key in ('OPENAI_API_KEY', 'ELEVENLABS_API_KEY', 'ELEVENLABS_VOICE_ID'):
+    for key in ('OPENAI_API_KEY', 'ELEVENLABS_API_KEY', 'ELEVENLABS_VOICE_ID', 'DASHBOARD_PASSWORD'):
         if not env.get(key):
             raise ValueError(f'Missing required env var: {key}')
 
@@ -86,4 +94,10 @@ def load_config(env=None, read_system_doc=_read_system_doc, read_pricing=_read_p
         # Seconds. Phone lines add delay a browser mic doesn't have: tune per deployment.
         silence_timeout=float(env.get('SILENCE_TIMEOUT_SECONDS') or 10),
         max_call=float(env.get('MAX_CALL_SECONDS') or 180),
+        dashboard_password=env['DASHBOARD_PASSWORD'],
+        # Calls older than this are deleted, recording included. 0 keeps nothing past the next purge.
+        retention_days=float(env.get('RETENTION_DAYS') or 30),
+        # Every stored time uses this one offset (Vietnam, no DST), whatever zone the server's clock is in:
+        # it keeps timestamps sortable as text and puts a call on the owner's calendar day.
+        utc_offset_hours=float(env.get('UTC_OFFSET_HOURS') or 7),
     )

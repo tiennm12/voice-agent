@@ -1,8 +1,10 @@
+from datetime import timedelta
+
 import pytest
 
 from voice_agent.config import HANGUP_MARKER, build_messages, build_system_prompt, load_config
 
-REQUIRED_ENV = {'OPENAI_API_KEY': 'k1', 'ELEVENLABS_API_KEY': 'k2', 'ELEVENLABS_VOICE_ID': 'v1'}
+from fakes import REQUIRED_ENV
 
 
 def test_build_system_prompt_embeds_the_trimmed_document_text():
@@ -101,3 +103,22 @@ def test_the_shipped_system_doc_and_pricing_table_load():
         config.pricing['tts']['per_1k_characters'],
     ):
         assert rate > 0
+
+
+def test_load_config_requires_a_dashboard_password():
+    env = {key: value for key, value in REQUIRED_ENV.items() if key != 'DASHBOARD_PASSWORD'}
+    with pytest.raises(ValueError, match='DASHBOARD_PASSWORD'):
+        load_config(env=env, read_system_doc=lambda: 'doc')
+
+
+def test_load_config_retention_and_clock_offset_defaults_and_overrides():
+    config = load_config(env=REQUIRED_ENV, read_system_doc=lambda: 'doc')
+    assert config.dashboard_password == REQUIRED_ENV['DASHBOARD_PASSWORD']
+    assert config.retention_days == 30
+    assert config.tz.utcoffset(None) == timedelta(hours=7)
+
+    config = load_config(
+        env={**REQUIRED_ENV, 'RETENTION_DAYS': '60', 'UTC_OFFSET_HOURS': '9'}, read_system_doc=lambda: 'doc',
+    )
+    assert config.retention_days == 60
+    assert config.tz.utcoffset(None) == timedelta(hours=9)

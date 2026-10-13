@@ -1,12 +1,13 @@
-import json
 import wave
 from collections import Counter
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
 
 from fakes import FakeHttp, FakeOpenai
-from voice_agent.call_record import CallRecord, compute_cost
+from voice_agent.call_record import CallRecord, compute_cost, purge_old_calls
+from voice_agent.db import Database
 
 PRICING = {
     'llm': {'input_per_1m_tokens': 0.40, 'output_per_1m_tokens': 1.60},
@@ -18,14 +19,18 @@ PRICING = {
     'usd_to_vnd': 25000,
 }
 TELEGRAM = {'telegram_bot_token': 'TOKEN', 'telegram_chat_id': '42'}
+VIETNAM = timezone(timedelta(hours=7))
 
 
-def make_record(tmp_path, pricing=PRICING):
-    return CallRecord(session_id='abc12345', data_dir=tmp_path, pricing=pricing)
+@pytest.fixture
+def db(tmp_path):
+    database = Database(tmp_path / 'voicemail.db')
+    yield database
+    database.close()
 
 
-def saved(record):
-    return json.loads((record.dir / 'call.json').read_text(encoding='utf-8'))
+def make_record(tmp_path, db, session_id='abc12345'):
+    return CallRecord(session_id=session_id, data_dir=tmp_path, pricing=PRICING, db=db, tz=VIETNAM)
 
 
 def with_message(record):
@@ -35,8 +40,8 @@ def with_message(record):
     return record
 
 
-def test_caller_audio_is_saved_as_a_playable_wav(tmp_path):
-    record = make_record(tmp_path)
+def test_caller_audio_is_saved_as_a_playable_wav(tmp_path, db):
+    record = make_record(tmp_path, db)
     record.write_audio(bytes([1, 0, 2, 0]))
     record.write_audio(bytes([3, 0]))
 
@@ -47,14 +52,13 @@ def test_caller_audio_is_saved_as_a_playable_wav(tmp_path):
         assert wav.readframes(wav.getnframes()) == bytes([1, 0, 2, 0, 3, 0])
 
 
-def test_close_saves_the_call_before_any_network_call_is_made(tmp_path):
-    record = with_message(make_record(tmp_path))
+def test_close_saves_the_call_before_any_network_call_is_made(tmp_path, db):
+    record = with_message(make_record(tmp_path, db))
 
     record.close()
 
-    call = saved(record)
-    assert record.dir.parent == tmp_path / 'calls'
-    assert call['id'] == record.dir.name
+    call = db.get_call(record.id)
+    assert record.dir == tmp_path / 'calls' / record.id
     assert call['caller'] == '0901234567'
     assert call['read'] is False
     assert call['summary'] is None
@@ -63,6 +67,18 @@ def test_close_saves_the_call_before_any_network_call_is_made(tmp_path):
         ('user', 'Mình là Nam, nhờ anh Tuấn gọi lại gấp về hợp đồng.'),
     ]
     assert call['started_at'] <= call['ended_at']
+    assert call['duration_seconds'] >= 0
+
+
+def test_times_are_recorded_in_the_configured_offset_whatever_the_servers_clock_zone(tmp_path, db):
+    record = make_record(tmp_path, db)
+    record.close()
+
+    call = db.get_call(record.id)
+
+    assert call['started_at'].endswith('+07:00')
+    assert call['ended_at'].endswith('+07:00')
+    assert record.id.startswith(datetime.now(VIETNAM).strftime('%Y%m%d'))
 
 
 @pytest.mark.parametrize('raw, caller', [
@@ -74,8 +90,8 @@ def test_close_saves_the_call_before_any_network_call_is_made(tmp_path):
     ('["not", "an", "object"]', None),
     ('not json at all', None),
 ])
-def test_set_caller_only_trusts_a_well_formed_call_meta_frame(tmp_path, raw, caller):
-    record = make_record(tmp_path)
+def test_set_caller_only_trusts_a_well_formed_call_meta_frame(tmp_path, db, raw, caller):
+    record = make_record(tmp_path, db)
     record.set_caller(raw)
     assert record.caller == caller
 
@@ -102,8 +118,8 @@ def test_compute_cost_omits_vnd_without_an_exchange_rate():
     assert 'total_vnd' not in cost
 
 
-def test_usage_is_accumulated_from_llm_and_stt_reports(tmp_path):
-    record = make_record(tmp_path)
+def test_usage_is_accumulated_from_llm_and_stt_reports(tmp_path, db):
+    record = make_record(tmp_path, db)
     record.add_llm_usage(SimpleNamespace(prompt_tokens=100, completion_tokens=10))
     record.add_llm_usage(SimpleNamespace(prompt_tokens=150, completion_tokens=20))
     record.add_stt_usage({
@@ -119,8 +135,8 @@ def test_usage_is_accumulated_from_llm_and_stt_reports(tmp_path):
     )
 
 
-async def test_summarizes_the_message_prices_the_call_and_notifies_telegram(tmp_path):
-    record = with_message(make_record(tmp_path))
+async def test_summarizes_the_message_prices_the_call_and_notifies_telegram(tmp_path, db):
+    record = with_message(make_record(tmp_path, db))
     record.add_llm_usage(SimpleNamespace(prompt_tokens=1000, completion_tokens=100))
     record.usage['tts_characters'] = 500
     record.close()
@@ -132,22 +148,23 @@ async def test_summarizes_the_message_prices_the_call_and_notifies_telegram(tmp_
     assert 'Người gọi: Mình là Nam, nhờ anh Tuấn gọi lại gấp về hợp đồng.' in dialogue
     assert openai.calls[0]['response_format'] == {'type': 'json_object'}
 
-    call = saved(record)
-    assert call['summary'] == {'caller_name': 'Anh Nam', 'summary': 'Nhờ gọi lại về hợp đồng.', 'urgency': 'cao'}
+    call = db.get_call(record.id)
+    assert (call['caller_name'], call['summary'], call['urgency']) == ('Anh Nam', 'Nhờ gọi lại về hợp đồng.', 'cao')
     # conversation (1000 in / 100 out) + the summary call itself (200 in / 40 out)
     assert call['usage']['llm_input_tokens'] == 1200
     assert call['usage']['llm_output_tokens'] == 140
-    assert call['cost']['total_usd'] == pytest.approx(1200 * 0.40 / 1e6 + 140 * 1.60 / 1e6 + 0.5 * 0.04)
+    assert call['total_usd'] == pytest.approx(1200 * 0.40 / 1e6 + 140 * 1.60 / 1e6 + 0.5 * 0.04)
+    assert call['cost']['total_usd'] == call['total_usd']
 
     [(url, payload)] = http.posts
     assert url == 'https://api.telegram.org/botTOKEN/sendMessage'
     assert payload['chat_id'] == '42'
-    for expected in ('0901234567', 'Anh Nam', 'Nhờ gọi lại về hợp đồng.', 'cao', f"${call['cost']['total_usd']:.4f}"):
+    for expected in ('0901234567', 'Anh Nam', 'Nhờ gọi lại về hợp đồng.', 'cao', f"${call['total_usd']:.4f}"):
         assert expected in payload['text'], expected
 
 
-async def test_a_call_with_no_message_skips_the_llm_and_still_notifies(tmp_path):
-    record = make_record(tmp_path)
+async def test_a_call_with_no_message_skips_the_llm_and_still_notifies(tmp_path, db):
+    record = make_record(tmp_path, db)
     record.add_transcript('assistant', 'Chào bạn, bạn cần nhắn gì không ạ?')
     record.close()
     openai, http = FakeOpenai(), FakeHttp()
@@ -155,25 +172,25 @@ async def test_a_call_with_no_message_skips_the_llm_and_still_notifies(tmp_path)
     await record.summarize_and_notify(openai_client=openai, http=http, **TELEGRAM)
 
     assert openai.calls == []
-    assert 'không để lại lời nhắn' in saved(record)['summary']['summary']
+    assert 'không để lại lời nhắn' in db.get_call(record.id)['summary']
     assert 'không để lại lời nhắn' in http.posts[0][1]['text']
 
 
-async def test_when_the_summary_llm_fails_the_call_is_kept_and_the_callers_own_words_are_sent(tmp_path):
-    record = with_message(make_record(tmp_path))
+async def test_when_the_summary_llm_fails_the_call_is_kept_and_the_callers_own_words_are_sent(tmp_path, db):
+    record = with_message(make_record(tmp_path, db))
     record.close()
     openai, http = FakeOpenai(summary_error=RuntimeError('boom')), FakeHttp()
 
     await record.summarize_and_notify(openai_client=openai, http=http, **TELEGRAM)
 
-    call = saved(record)
+    call = db.get_call(record.id)
     assert len(call['transcript']) == 2
-    assert 'nhờ anh Tuấn gọi lại gấp' in call['summary']['summary']
+    assert 'nhờ anh Tuấn gọi lại gấp' in call['summary']
     assert 'nhờ anh Tuấn gọi lại gấp' in http.posts[0][1]['text']
 
 
-async def test_without_telegram_settings_nothing_is_sent_but_the_call_is_still_saved(tmp_path):
-    record = with_message(make_record(tmp_path))
+async def test_without_telegram_settings_nothing_is_sent_but_the_call_is_still_saved(tmp_path, db):
+    record = with_message(make_record(tmp_path, db))
     record.close()
     http = FakeHttp()
 
@@ -182,11 +199,11 @@ async def test_without_telegram_settings_nothing_is_sent_but_the_call_is_still_s
     )
 
     assert http.posts == []
-    assert saved(record)['summary']['caller_name'] == 'Anh Nam'
+    assert db.get_call(record.id)['caller_name'] == 'Anh Nam'
 
 
-async def test_a_telegram_network_error_is_logged_without_leaking_the_bot_token(tmp_path, caplog):
-    record = with_message(make_record(tmp_path))
+async def test_a_telegram_network_error_is_logged_without_leaking_the_bot_token(tmp_path, db, caplog):
+    record = with_message(make_record(tmp_path, db))
     record.close()
     http = FakeHttp(error=OSError('cannot reach https://api.telegram.org/botTOKEN/sendMessage'))
 
@@ -194,13 +211,30 @@ async def test_a_telegram_network_error_is_logged_without_leaking_the_bot_token(
 
     assert 'telegram notification failed' in caplog.text
     assert 'TOKEN' not in caplog.text
-    assert saved(record)['summary']['caller_name'] == 'Anh Nam'
+    assert db.get_call(record.id)['caller_name'] == 'Anh Nam'
 
 
-async def test_a_telegram_failure_does_not_lose_the_summary(tmp_path):
-    record = with_message(make_record(tmp_path))
+async def test_a_telegram_failure_does_not_lose_the_summary(tmp_path, db):
+    record = with_message(make_record(tmp_path, db))
     record.close()
 
     await record.summarize_and_notify(openai_client=FakeOpenai(), http=FakeHttp(status=403), **TELEGRAM)
 
-    assert saved(record)['summary']['caller_name'] == 'Anh Nam'
+    assert db.get_call(record.id)['caller_name'] == 'Anh Nam'
+
+
+def test_purge_removes_the_row_and_the_recording_of_calls_past_retention(tmp_path, db):
+    old = make_record(tmp_path, db, session_id='old00000')
+    old.close()
+    recent = make_record(tmp_path, db, session_id='new00000')
+    recent.close()
+    # Age the first call by rewriting its start time, as if it were recorded 40 days ago.
+    aged = db.get_call(old.id)
+    aged['started_at'] = (datetime.now(VIETNAM) - timedelta(days=40)).isoformat()
+    db.save_call(aged)
+
+    purged = purge_old_calls(db, tmp_path, retention_days=30, tz=VIETNAM)
+
+    assert purged == [old.id]
+    assert db.get_call(old.id) is None and not old.dir.exists()
+    assert db.get_call(recent.id) is not None and (recent.dir / 'caller.wav').exists()

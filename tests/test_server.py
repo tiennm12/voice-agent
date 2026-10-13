@@ -4,61 +4,32 @@ import json
 import wave
 
 import pytest
-from aiohttp import WSMsgType
-from aiohttp.test_utils import TestClient, TestServer
+from aiohttp import WSMsgType, WSServerHandshakeError
 from yarl import URL
 
-from fakes import FakeOpenai, FakeWs
-from voice_agent.config import load_config
-from voice_agent.server import create_app
+from fakes import PASSWORD, FakeUpstream, start_app
+from voice_agent import auth
+from voice_agent.server import DB
 
 GREETING = 'Chào bạn, chủ máy hiện không thể nghe máy. Mình là trợ lý AI, bạn cần nhắn gì không ạ?'
 
 
-class FakeUpstream:
-    """Hands the server fake STT/TTS sockets and a fake OpenAI client."""
-
-    def __init__(self, stt_error=None, **openai_kwargs):
-        self.stt_error = stt_error
-        self.openai = FakeOpenai(**openai_kwargs)
-        self.stt = FakeWs()
-        self.tts = []  # one socket per spoken turn
-        self.tts_urls = []
-
-    async def ws_connect(self, url, headers=None):
-        if 'api.openai.com' not in url:
-            self.tts_urls.append(url)
-        if 'api.openai.com' in url:
-            if self.stt_error:
-                raise self.stt_error
-            return self.stt
-        self.tts.append(FakeWs())
-        return self.tts[-1]
-
-    async def tts_socket(self, index=0):
-        """The TTS socket of the index-th spoken turn, once its text has been sent in full."""
-        async with asyncio.timeout(2):
-            # sent = [init message, text chunk(s)..., end-of-turn '']
-            while len(self.tts) <= index or self.tts[index].sent[-1:] != [{'text': ''}]:
-                await asyncio.sleep(0.005)
-        return self.tts[index]
-
-
-async def start(tmp_path, upstream):
-    config = load_config(
-        env={'OPENAI_API_KEY': 'k1', 'ELEVENLABS_API_KEY': 'k2', 'ELEVENLABS_VOICE_ID': 'v1', 'DATA_DIR': str(tmp_path)},
-        read_system_doc=lambda: 'doc',
-    )
-    client = TestClient(TestServer(create_app(config, ws_connect=upstream.ws_connect, openai_client=upstream.openai)))
-    await client.start_server()
-    return client
+@pytest.fixture(autouse=True)
+def no_login_delay(monkeypatch):
+    monkeypatch.setattr(auth, 'LOGIN_FAILURE_DELAY', 0)
 
 
 @pytest.fixture
 async def served(tmp_path):
-    upstream = FakeUpstream()
-    client = await start(tmp_path, upstream)
+    client, upstream = await start_app(tmp_path)
     yield client, upstream
+    await client.close()
+
+
+@pytest.fixture
+async def anonymous(tmp_path):
+    client, _ = await start_app(tmp_path, login=False)
+    yield client
     await client.close()
 
 
@@ -73,15 +44,85 @@ async def receive_until(ws, predicate, timeout=3):
     return frames
 
 
-async def saved_call(tmp_path, ready=lambda call: True):
-    """The single call.json under tmp_path, once it exists and satisfies ready()."""
+async def saved_call(client, ready=lambda call: True):
+    """The single call in the app's database, once it exists and satisfies ready()."""
+    db = client.app[DB]
     async with asyncio.timeout(3):
         while True:
-            for path in tmp_path.glob('calls/*/call.json'):
-                call = json.loads(path.read_text(encoding='utf-8'))
+            for row in db.list_calls():
+                call = db.get_call(row['id'])
                 if ready(call):
-                    return path.parent, call
+                    return call
             await asyncio.sleep(0.01)
+
+
+# --- login ---------------------------------------------------------------
+
+
+async def test_pages_redirect_to_login_and_the_api_and_call_socket_answer_401_without_a_session(anonymous):
+    for path in ('/', '/client.js', '/bridge.html'):
+        response = await anonymous.get(path, allow_redirects=False)
+        assert (response.status, response.headers.get('Location')) == (302, '/login'), path
+
+    assert (await anonymous.get('/api/calls')).status == 401
+    with pytest.raises(WSServerHandshakeError) as refused:
+        await anonymous.ws_connect('/ws')
+    assert refused.value.status == 401
+
+
+async def test_the_login_page_is_reachable_without_a_session(anonymous):
+    response = await anonymous.get('/login')
+
+    assert response.status == 200
+    assert 'name="password"' in await response.text()
+
+
+async def test_a_wrong_password_gets_no_session(anonymous):
+    response = await anonymous.post('/login', data={'password': 'guess'}, allow_redirects=False)
+
+    assert (response.status, response.headers['Location']) == (302, '/login?error=1')
+    assert 'session' not in response.cookies
+    assert (await anonymous.get('/', allow_redirects=False)).status == 302
+
+
+async def test_the_right_password_opens_a_session_in_a_hardened_cookie(anonymous):
+    response = await anonymous.post('/login', data={'password': PASSWORD}, allow_redirects=False)
+
+    assert (response.status, response.headers['Location']) == (302, '/')
+    cookie = response.cookies['session']
+    assert cookie['httponly'] and cookie['samesite'] == 'Strict'
+    assert not cookie['secure'], 'plain-http localhost must still be able to log in'
+    assert int(cookie['max-age']) == 30 * 24 * 3600
+    assert (await anonymous.get('/', allow_redirects=False)).status == 200
+
+
+async def test_the_session_cookie_is_secure_behind_https(anonymous):
+    response = await anonymous.post(
+        '/login', data={'password': PASSWORD}, headers={'X-Forwarded-Proto': 'https'}, allow_redirects=False,
+    )
+
+    assert response.cookies['session']['secure']
+
+
+async def test_logout_ends_the_session(served):
+    client, _ = served
+
+    response = await client.post('/logout', allow_redirects=False)
+
+    assert (response.status, response.headers['Location']) == (302, '/login')
+    assert (await client.get('/', allow_redirects=False)).status == 302
+
+
+async def test_a_call_socket_opened_from_another_site_is_refused_even_with_a_session(served):
+    client, _ = served
+
+    with pytest.raises(WSServerHandshakeError) as refused:
+        await client.ws_connect('/ws', headers={'Origin': 'https://evil.example'})
+
+    assert refused.value.status == 403
+
+
+# --- static files ----------------------------------------------------------
 
 
 async def test_serves_the_browser_client_with_script_content_types(served):
@@ -90,7 +131,6 @@ async def test_serves_the_browser_client_with_script_content_types(served):
     page = await client.get('/')
     assert page.status == 200
     assert 'text/html' in page.headers['Content-Type']
-    assert 'Voice Agent' in await page.text()
 
     for path in ('/client.js', '/pcm-encoder-processor.js'):
         script = await client.get(path)
@@ -106,6 +146,9 @@ async def test_does_not_serve_files_outside_public(served):
 
     assert response.status in (403, 404)
     assert 'OPENAI_API_KEY' not in await response.text()
+
+
+# --- calls -----------------------------------------------------------------
 
 
 async def test_a_call_speaks_the_fixed_greeting_and_relays_control_and_audio_in_order(served):
@@ -154,21 +197,20 @@ async def test_hanging_up_closes_the_upstream_stt_and_tts_sockets(served):
 
 
 async def test_a_call_that_cannot_reach_stt_tells_the_browser_closes_and_is_still_recorded_as_a_missed_call(tmp_path):
-    client = await start(tmp_path, FakeUpstream(stt_error=OSError('dns failure')))
+    client, _ = await start_app(tmp_path, FakeUpstream(stt_error=OSError('dns failure')))
     try:
         ws = await client.ws_connect('/ws')
         frames = await receive_until(ws, lambda f: False)  # runs until the server closes
         assert frames == [{'type': 'error', 'message': 'Không thể kết nối tới dịch vụ giọng nói.'}]
 
-        _, call = await saved_call(tmp_path, lambda call: call['summary'])
-        assert 'không để lại lời nhắn' in call['summary']['summary']
+        call = await saved_call(client, lambda call: call['summary'])
+        assert 'không để lại lời nhắn' in call['summary']
     finally:
         await client.close()
 
 
 async def test_a_full_voicemail_call_hangs_up_after_the_goodbye_and_is_saved_with_summary_and_cost(tmp_path):
-    upstream = FakeUpstream(reply='Mình đã ghi nhận, chào bạn nhé. [HANGUP]')
-    client = await start(tmp_path, upstream)
+    client, upstream = await start_app(tmp_path, FakeUpstream(reply='Mình đã ghi nhận, chào bạn nhé. [HANGUP]'))
     try:
         ws = await client.ws_connect('/ws')
         await ws.send_str(json.dumps({'type': 'callMeta', 'caller': '0901234567', 'pbxSessionId': 'pbx-1'}))
@@ -191,15 +233,16 @@ async def test_a_full_voicemail_call_hangs_up_after_the_goodbye_and_is_saved_wit
         assert {'type': 'transcript', 'role': 'assistant', 'text': 'Mình đã ghi nhận, chào bạn nhé.'} in frames
         assert ws.closed
 
-        call_dir, call = await saved_call(tmp_path, lambda call: call['cost'])
+        call = await saved_call(client, lambda call: call['cost'])
         assert call['caller'] == '0901234567'
         assert call['pbx_session_id'] == 'pbx-1'
+        assert call['read'] is False
         assert [(t['role'], t['text']) for t in call['transcript']] == [
             ('assistant', GREETING),
             ('user', 'Mình là Nam, nhờ anh Tuấn gọi lại.'),
             ('assistant', 'Mình đã ghi nhận, chào bạn nhé.'),
         ]
-        assert call['summary'] == {'caller_name': 'Anh Nam', 'summary': 'Nhờ gọi lại về hợp đồng.', 'urgency': 'cao'}
+        assert (call['caller_name'], call['summary'], call['urgency']) == ('Anh Nam', 'Nhờ gọi lại về hợp đồng.', 'cao')
         assert call['usage'] == {
             'llm_input_tokens': 100 + 200,  # the reply + the summary
             'llm_output_tokens': 10 + 40,
@@ -209,8 +252,8 @@ async def test_a_full_voicemail_call_hangs_up_after_the_goodbye_and_is_saved_wit
             # every chunk goes out with one trailing space, which replaces the one between chunks
             'tts_characters': len(GREETING + ' ') + len('Mình đã ghi nhận, chào bạn nhé. '),
         }
-        assert call['cost']['total_usd'] > 0
-        with wave.open(str(call_dir / 'caller.wav'), 'rb') as wav:
+        assert call['total_usd'] > 0
+        with wave.open(str(tmp_path / 'calls' / call['id'] / 'caller.wav'), 'rb') as wav:
             assert wav.readframes(wav.getnframes()) == bytes([7, 0, 8, 0])
     finally:
         await client.close()
@@ -234,3 +277,21 @@ async def test_an_unknown_audio_format_falls_back_to_mp3(served):
 
     assert upstream.tts_urls[0].endswith('output_format=mp3_44100_128')
     await ws.close()
+
+
+async def test_calls_past_the_retention_period_are_purged_when_the_server_starts(tmp_path):
+    # First run records a call; RETENTION_DAYS=0 on the next start makes every finished call "old".
+    client, upstream = await start_app(tmp_path)
+    ws = await client.ws_connect('/ws')
+    await upstream.tts_socket()
+    await ws.close()
+    call = await saved_call(client, lambda call: call['summary'])
+    await client.close()
+    assert (tmp_path / 'calls' / call['id'] / 'caller.wav').exists()
+
+    client, _ = await start_app(tmp_path, RETENTION_DAYS='0')
+    try:
+        assert client.app[DB].list_calls() == []
+        assert not (tmp_path / 'calls' / call['id']).exists()
+    finally:
+        await client.close()
