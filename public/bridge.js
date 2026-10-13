@@ -112,12 +112,32 @@ async function login(event) {
   }
 }
 
+// Whether the owner blocked this number. Any failure counts as "not blocked":
+// better to answer a spammer than to turn a real caller away.
+async function isBlocked(caller) {
+  try {
+    const response = await fetch('/api/blocked', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ caller }),
+    });
+    return response.ok && (await response.json()).blocked;
+  } catch {
+    return false;
+  }
+}
+
 async function answer(invitation) {
   if (activeCall) {
     invitation.reject(); // busy: the agent handles one call at a time
     return;
   }
   activeCall = invitation;
+  if (await isBlocked(invitation.remoteIdentity.uri.user)) {
+    activeCall = null;
+    invitation.reject(); // never picked up: costs nothing, and the server has logged the attempt
+    return;
+  }
   // A fresh destination per call: SIP.js stops its tracks when the call ends.
   callOutput = bridgeContext.createMediaStreamDestination();
 

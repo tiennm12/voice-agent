@@ -12,13 +12,14 @@ from dotenv import load_dotenv
 from openai import AsyncOpenAI
 
 from .api import setup_api
-from .auth import setup_auth
+from .auth import make_call_link, session_secret, setup_auth
 from .call_record import CallRecord, purge_old_calls
 from .config import build_system_prompt, effective_settings, load_config
 from .db import Database
 from .llm_client import stream_completion
 from .realtime_stt_client import RealtimeSttClient
 from .session_orchestrator import SessionOrchestrator
+from .telegram import TelegramNotifier
 from .tts_client import AUDIO_FORMATS, TtsClient
 
 log = logging.getLogger(__name__)
@@ -31,9 +32,9 @@ DB = web.AppKey('db', Database)
 PURGE_INTERVAL = 24 * 3600
 
 
-def create_app(config, *, ws_connect=None, openai_client=None):
-    """ws_connect / openai_client default to the real upstreams; tests pass fakes."""
-    upstream = {}
+def create_app(config, *, ws_connect=None, openai_client=None, http=None):
+    """ws_connect / openai_client / http default to the real upstreams; tests pass fakes."""
+    upstream = {'notifier': None}
     config.data_dir.mkdir(parents=True, exist_ok=True)
     db = Database(config.data_dir / 'voicemail.db')
 
@@ -48,13 +49,26 @@ def create_app(config, *, ws_connect=None, openai_client=None):
             purge()
 
     async def lifetime(app):
-        upstream['http'] = aiohttp.ClientSession()
+        upstream['http'] = http or aiohttp.ClientSession()
         upstream['ws_connect'] = ws_connect or upstream['http'].ws_connect
         upstream['openai'] = openai_client or AsyncOpenAI(api_key=config.openai_api_key)
+        if config.telegram_bot_token and config.telegram_chat_id:
+            secret = session_secret(config.dashboard_password)
+            upstream['notifier'] = TelegramNotifier(
+                http=upstream['http'],
+                token=config.telegram_bot_token,
+                chat_id=config.telegram_chat_id,
+                db=db,
+                # Without a public address there is nothing a phone could open: no button.
+                link_for=partial(make_call_link, secret, config.public_base_url) if config.public_base_url else None,
+                reminder_minutes=config.urgent_reminder_minutes,
+            )
         purge()
         purging = asyncio.create_task(purge_daily())
         yield
         purging.cancel()
+        if upstream['notifier']:
+            upstream['notifier'].close()
         await upstream['http'].close()
         await upstream['openai'].close()
         db.close()
@@ -149,12 +163,9 @@ def create_app(config, *, ws_connect=None, openai_client=None):
             record.close()  # the call is on disk before anything below can fail
 
         await browser_ws.close()
-        await record.summarize_and_notify(
-            openai_client=upstream['openai'],
-            http=upstream['http'],
-            telegram_bot_token=config.telegram_bot_token,
-            telegram_chat_id=config.telegram_chat_id,
-        )
+        await record.summarize(upstream['openai'])
+        if upstream['notifier']:
+            await upstream['notifier'].notify_call(db.get_call(record.id))
         return browser_ws
 
     async def forbid_stale_copies(request, response):
@@ -167,7 +178,7 @@ def create_app(config, *, ws_connect=None, openai_client=None):
     app.cleanup_ctx.append(lifetime)
     app.on_response_prepare.append(forbid_stale_copies)
     setup_auth(app, config.dashboard_password, PUBLIC_DIR / 'login.html')
-    setup_api(app, db, config)
+    setup_api(app, db, config, PUBLIC_DIR)
     app.router.add_get('/', index)
     app.router.add_get('/ws', call)
     app.router.add_static('/', PUBLIC_DIR)
@@ -178,7 +189,8 @@ def main():
     load_dotenv()
     logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
     config = load_config()
-    web.run_app(create_app(config), port=config.port)
+    # No access log: call links carry their token in the query string.
+    web.run_app(create_app(config), port=config.port, access_log=None)
 
 
 if __name__ == '__main__':

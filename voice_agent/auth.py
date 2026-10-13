@@ -1,6 +1,7 @@
 import asyncio
 import hashlib
 import hmac
+import re
 import time
 from urllib.parse import urlsplit
 
@@ -8,6 +9,11 @@ from aiohttp import web
 
 SESSION_COOKIE = 'session'
 SESSION_LIFETIME = 30 * 24 * 3600
+CALL_LINK_LIFETIME = 7 * 24 * 3600
+# Served to anyone: the login page, and the two assets the call-link page is built from.
+PUBLIC_PATHS = {'/login', '/app.css', '/call-view.js'}
+# All a call link's token opens: that one call's page and its own API routes.
+CALL_LINK_PATH = re.compile(r'/c/(?P<page_id>[^/]+)|/api/calls/(?P<api_id>[^/]+)(/audio|/read)?')
 # Seconds a wrong password costs: a cheap brake on guessing.
 # ponytail: no lockout or per-IP limit. Add one if this is ever exposed without a long random password.
 LOGIN_FAILURE_DELAY = 1.0
@@ -40,6 +46,18 @@ def token_is_valid(secret, subject, token, now=None):
     return hmac.compare_digest(signature.encode(), _signature(secret, subject, expires).encode())
 
 
+def make_call_link(secret, base_url, call_id):
+    """A URL that opens one call for a week without logging in — what the Telegram button points at."""
+    return f'{base_url}/c/{call_id}?t={make_token(secret, f"call:{call_id}", CALL_LINK_LIFETIME)}'
+
+
+def _has_call_link(request, secret):
+    match = CALL_LINK_PATH.fullmatch(request.path)
+    if not match:
+        return False
+    return token_is_valid(secret, f"call:{match['page_id'] or match['api_id']}", request.query.get('t'))
+
+
 def _is_https(request):
     return request.secure or request.headers.get('X-Forwarded-Proto') == 'https'
 
@@ -56,7 +74,12 @@ def setup_auth(app, password, login_page):
 
     @web.middleware
     async def require_session(request, handler):
-        if request.path != '/login' and not token_is_valid(secret, 'session', request.cookies.get(SESSION_COOKIE)):
+        allowed = (
+            request.path in PUBLIC_PATHS
+            or token_is_valid(secret, 'session', request.cookies.get(SESSION_COOKIE))
+            or _has_call_link(request, secret)
+        )
+        if not allowed:
             if request.path.startswith('/api/') or request.path == '/ws':
                 raise web.HTTPUnauthorized()
             raise web.HTTPFound('/login')

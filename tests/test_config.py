@@ -133,4 +133,6 @@ def test_saved_settings_override_the_defaults_one_key_at_a_time():
 
     settings = effective_settings(config, {'greeting': 'Alo.', 'system_doc': 'Khác.'})
 
-    assert settings == {'owner_name': 'anh Tuấn', 'greeting': 'Alo.', 'system_doc': 'Khác.'}
+    assert settings == {
+        'owner_name': 'anh Tuấn', 'greeting': 'Alo.', 'system_doc': 'Khác.', 'blocked_numbers': [],
+    }

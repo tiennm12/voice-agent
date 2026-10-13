@@ -7,21 +7,22 @@ from collections import Counter
 from datetime import datetime, timedelta
 from pathlib import Path
 
-import aiohttp
-
 from .llm_client import CHAT_MODEL
 
 log = logging.getLogger(__name__)
 
 SUMMARY_PROMPT = (
     'Bạn nhận transcript một cuộc gọi nhỡ do trợ lý AI nghe máy thay chủ thuê bao. '
-    'Trả về một JSON object với đúng 3 khóa: '
+    'Trả về một JSON object với đúng 4 khóa: '
     '"caller_name" (tên người gọi, hoặc "Không rõ" nếu họ không nói), '
     '"summary" (1-2 câu tiếng Việt tóm tắt lời nhắn), '
-    '"urgency" (một trong: "thấp", "trung bình", "cao").'
+    '"urgency" (một trong: "thấp", "trung bình", "cao"), '
+    '"category" ("spam" nếu là telesales, quảng cáo, lừa đảo hoặc cuộc gọi tự động; còn lại là "bình thường").'
 )
-NO_MESSAGE = {'caller_name': 'Không rõ', 'summary': 'Người gọi không để lại lời nhắn.', 'urgency': 'thấp'}
-TELEGRAM_MAX_TEXT = 4096
+NORMAL, SPAM = 'bình thường', 'spam'
+NO_MESSAGE = {
+    'caller_name': 'Không rõ', 'summary': 'Người gọi không để lại lời nhắn.', 'urgency': 'thấp', 'category': NORMAL,
+}
 
 
 def compute_cost(usage, pricing):
@@ -125,7 +126,8 @@ class CallRecord:
         self._wav.close()
         self._save()
 
-    async def summarize_and_notify(self, *, openai_client, http, telegram_bot_token, telegram_chat_id):
+    async def summarize(self, openai_client):
+        """Fills in summary and cost, and saves. Never raises: a failed summary falls back to the caller's words."""
         caller_lines = [turn['text'] for turn in self.transcript if turn['role'] == 'user' and turn['text'].strip()]
         if not caller_lines:
             self.summary = NO_MESSAGE
@@ -133,23 +135,14 @@ class CallRecord:
             try:
                 self.summary = await self._summarize(openai_client)
             except Exception:
-                log.exception('[%s] summary failed, falling back to the caller\'s own words', self.session_id)
-                self.summary = {'caller_name': 'Không rõ', 'summary': ' '.join(caller_lines), 'urgency': 'không rõ'}
+                log.exception("[%s] summary failed, falling back to the caller's own words", self.session_id)
+                self.summary = {
+                    'caller_name': 'Không rõ', 'summary': ' '.join(caller_lines), 'urgency': 'không rõ', 'category': NORMAL,
+                }
 
         self.cost = compute_cost(self.usage, self._pricing)
         self._save()
         log.info('[%s] [cost] total $%.4f %s usage %s', self.session_id, self.cost['total_usd'], self.cost, dict(self.usage))
-
-        if telegram_bot_token and telegram_chat_id:
-            try:
-                await self._notify(http, telegram_bot_token, telegram_chat_id)
-            except Exception as err:
-                # No traceback, and the token scrubbed: the request URL carries it, and
-                # client errors like to quote the URL.
-                log.error(
-                    '[%s] telegram notification failed: %s %s',
-                    self.session_id, type(err).__name__, str(err).replace(telegram_bot_token, '***'),
-                )
 
     async def _summarize(self, openai_client):
         dialogue = '\n'.join(
@@ -163,30 +156,10 @@ class CallRecord:
         if response.usage:
             self.add_llm_usage(response.usage)
         data = json.loads(response.choices[0].message.content)
-        return {key: str(data[key]) for key in ('caller_name', 'summary', 'urgency')}
-
-    def notification_text(self):
-        minutes, seconds = divmod(round((self.ended_at - self.started_at).total_seconds()), 60)
-        cost = f"${self.cost['total_usd']:.4f}"
-        if 'total_vnd' in self.cost:
-            cost += f" (~{self.cost['total_vnd']:,}đ)".replace(',', '.')
-        return '\n'.join([
-            f"Cuộc gọi nhỡ từ {self.caller or 'số không rõ'} lúc {self.started_at:%H:%M %d/%m/%Y}",
-            f"Người gọi: {self.summary['caller_name']}",
-            f"Nội dung: {self.summary['summary']}",
-            f"Độ khẩn: {self.summary['urgency']}",
-            f"Thời lượng: {minutes}:{seconds:02d} · Chi phí: {cost}",
-        ])[:TELEGRAM_MAX_TEXT]
-
-    async def _notify(self, http, token, chat_id):
-        async with http.post(
-            f'https://api.telegram.org/bot{token}/sendMessage',
-            json={'chat_id': chat_id, 'text': self.notification_text()},
-            timeout=aiohttp.ClientTimeout(total=10),
-        ) as response:
-            if response.status != 200:
-                # Never log the URL: it carries the bot token.
-                log.error('[%s] telegram sendMessage failed: %s %s', self.session_id, response.status, (await response.text())[:300])
+        summary = {key: str(data[key]) for key in ('caller_name', 'summary', 'urgency')}
+        # Spam silences the notification, so only the exact label counts; anything else is a normal call.
+        summary['category'] = SPAM if data.get('category') == SPAM else NORMAL
+        return summary
 
     def _save(self):
         summary = self.summary or {}

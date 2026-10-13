@@ -7,7 +7,7 @@ import pytest
 from aiohttp import WSMsgType, WSServerHandshakeError
 from yarl import URL
 
-from fakes import PASSWORD, FakeUpstream, start_app
+from fakes import PASSWORD, FakeHttp, FakeUpstream, start_app
 from voice_agent import auth
 from voice_agent.server import DB
 
@@ -304,5 +304,96 @@ async def test_calls_past_the_retention_period_are_purged_when_the_server_starts
     try:
         assert client.app[DB].list_calls() == []
         assert not (tmp_path / 'calls' / call['id']).exists()
+    finally:
+        await client.close()
+
+
+# --- signed call links (the button under a Telegram notification) -----------
+
+CALL_ID = '20261013T090000_bbbbbbbb'
+OTHER_ID = '20261012T090000_aaaaaaaa'
+
+
+def seed_call(client, tmp_path, call_id):
+    client.app[DB].save_call({
+        'id': call_id, 'session_id': call_id[-8:], 'caller': '0901234567',
+        'started_at': '2026-10-13T09:00:00+07:00', 'ended_at': '2026-10-13T09:00:20+07:00', 'duration_seconds': 20,
+        'summary': 'Nhờ gọi lại.', 'transcript': [], 'usage': {},
+    })
+    folder = tmp_path / 'calls' / call_id
+    folder.mkdir(parents=True)
+    (folder / 'caller.wav').write_bytes(b'RIFFdata')
+
+
+def link_query(call_id, lifetime=3600):
+    return {'t': auth.make_token(auth.session_secret(PASSWORD), f'call:{call_id}', lifetime)}
+
+
+async def test_a_call_link_opens_that_call_without_a_session(anonymous, tmp_path):
+    seed_call(anonymous, tmp_path, CALL_ID)
+    query = link_query(CALL_ID)
+
+    page = await anonymous.get(f'/c/{CALL_ID}', params=query)
+    assert page.status == 200
+    assert 'call-view.js' in await page.text()
+    for asset in ('/app.css', '/call-view.js'):
+        assert (await anonymous.get(asset)).status == 200, f'{asset} must load for someone who is not logged in'
+
+    call = await anonymous.get(f'/api/calls/{CALL_ID}', params=query)
+    assert (await call.json())['summary'] == 'Nhờ gọi lại.'
+    audio = await anonymous.get(f'/api/calls/{CALL_ID}/audio', params=query)
+    assert await audio.read() == b'RIFFdata'
+
+    marked = await anonymous.post(f'/api/calls/{CALL_ID}/read', params=query, json={'read': True})
+    assert marked.status == 200
+    assert anonymous.app[DB].get_call(CALL_ID)['read'] is True
+
+
+async def test_a_call_link_opens_nothing_but_its_own_call(anonymous, tmp_path):
+    seed_call(anonymous, tmp_path, CALL_ID)
+    seed_call(anonymous, tmp_path, OTHER_ID)
+    query = link_query(CALL_ID)
+
+    assert (await anonymous.get(f'/api/calls/{OTHER_ID}', params=query)).status == 401
+    assert (await anonymous.get(f'/api/calls/{OTHER_ID}/audio', params=query)).status == 401
+    assert (await anonymous.get(f'/c/{OTHER_ID}', params=query, allow_redirects=False)).status == 302
+    for path in ('/api/calls', '/api/settings', '/api/stats'):
+        assert (await anonymous.get(path, params=query)).status == 401, path
+    assert (await anonymous.put('/api/settings', params=query, json={'greeting': 'hacked'})).status == 401
+    assert (await anonymous.get('/', params=query, allow_redirects=False)).status == 302
+
+
+async def test_an_expired_or_forged_call_link_is_refused(anonymous, tmp_path):
+    seed_call(anonymous, tmp_path, CALL_ID)
+
+    for query in (link_query(CALL_ID, lifetime=-10), {'t': '9999999999.deadbeef'}, {'t': ''}, {}):
+        assert (await anonymous.get(f'/api/calls/{CALL_ID}', params=query)).status == 401, query
+
+
+async def test_a_finished_call_is_announced_on_telegram_with_a_working_link(tmp_path):
+    http = FakeHttp()
+    client, upstream = await start_app(
+        tmp_path, http=http, login=False,
+        TELEGRAM_BOT_TOKEN='TOKEN', TELEGRAM_CHAT_ID='42', PUBLIC_BASE_URL='https://vm.example/',
+    )
+    try:
+        await client.post('/login', data={'password': PASSWORD}, allow_redirects=False)
+        ws = await client.ws_connect('/ws')
+        await ws.send_str(json.dumps({'type': 'callMeta', 'caller': '0901234567'}))
+        await upstream.tts_socket()
+        await ws.close()
+        async with asyncio.timeout(3):
+            while not http.posts:
+                await asyncio.sleep(0.01)
+
+        url, payload = http.posts[0]
+        assert url == 'https://api.telegram.org/botTOKEN/sendMessage'
+        assert 'Cuộc gọi nhỡ từ 0901234567' in payload['text']
+        link = payload['reply_markup']['inline_keyboard'][0][0]['url']
+        assert link.startswith('https://vm.example/c/2'), link
+
+        await client.post('/logout', allow_redirects=False)
+        opened = await client.get(link.removeprefix('https://vm.example'))
+        assert opened.status == 200
     finally:
         await client.close()

@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from fakes import FakeHttp, FakeOpenai
+from fakes import FakeOpenai
 from voice_agent.call_record import CallRecord, compute_cost, purge_old_calls
 from voice_agent.db import Database
 
@@ -18,7 +18,6 @@ PRICING = {
     'tts': {'per_1k_characters': 0.04},
     'usd_to_vnd': 25000,
 }
-TELEGRAM = {'telegram_bot_token': 'TOKEN', 'telegram_chat_id': '42'}
 VIETNAM = timezone(timedelta(hours=7))
 
 
@@ -135,14 +134,14 @@ def test_usage_is_accumulated_from_llm_and_stt_reports(tmp_path, db):
     )
 
 
-async def test_summarizes_the_message_prices_the_call_and_notifies_telegram(tmp_path, db):
+async def test_summarize_fills_in_the_summary_and_prices_the_call(tmp_path, db):
     record = with_message(make_record(tmp_path, db))
     record.add_llm_usage(SimpleNamespace(prompt_tokens=1000, completion_tokens=100))
     record.usage['tts_characters'] = 500
     record.close()
-    openai, http = FakeOpenai(), FakeHttp()
+    openai = FakeOpenai()
 
-    await record.summarize_and_notify(openai_client=openai, http=http, **TELEGRAM)
+    await record.summarize(openai)
 
     dialogue = openai.calls[0]['messages'][-1]['content']
     assert 'Người gọi: Mình là Nam, nhờ anh Tuấn gọi lại gấp về hợp đồng.' in dialogue
@@ -150,77 +149,59 @@ async def test_summarizes_the_message_prices_the_call_and_notifies_telegram(tmp_
 
     call = db.get_call(record.id)
     assert (call['caller_name'], call['summary'], call['urgency']) == ('Anh Nam', 'Nhờ gọi lại về hợp đồng.', 'cao')
+    assert call['category'] == 'bình thường'
     # conversation (1000 in / 100 out) + the summary call itself (200 in / 40 out)
     assert call['usage']['llm_input_tokens'] == 1200
     assert call['usage']['llm_output_tokens'] == 140
     assert call['total_usd'] == pytest.approx(1200 * 0.40 / 1e6 + 140 * 1.60 / 1e6 + 0.5 * 0.04)
     assert call['cost']['total_usd'] == call['total_usd']
 
-    [(url, payload)] = http.posts
-    assert url == 'https://api.telegram.org/botTOKEN/sendMessage'
-    assert payload['chat_id'] == '42'
-    for expected in ('0901234567', 'Anh Nam', 'Nhờ gọi lại về hợp đồng.', 'cao', f"${call['total_usd']:.4f}"):
-        assert expected in payload['text'], expected
+
+async def test_a_sales_call_is_filed_as_spam(tmp_path, db):
+    record = with_message(make_record(tmp_path, db))
+    record.close()
+    summary = {'caller_name': 'Không rõ', 'summary': 'Mời mua bảo hiểm.', 'urgency': 'thấp', 'category': 'spam'}
+
+    await record.summarize(FakeOpenai(summary=summary))
+
+    assert db.get_call(record.id)['category'] == 'spam'
 
 
-async def test_a_call_with_no_message_skips_the_llm_and_still_notifies(tmp_path, db):
+@pytest.mark.parametrize('category', ['Spam!', 'quảng cáo', None, 42])
+async def test_any_category_the_model_invents_counts_as_a_normal_call(tmp_path, db, category):
+    record = with_message(make_record(tmp_path, db))
+    record.close()
+    summary = {'caller_name': 'Nam', 'summary': 'Nhờ gọi lại.', 'urgency': 'thấp', 'category': category}
+
+    await record.summarize(FakeOpenai(summary=summary))
+
+    assert db.get_call(record.id)['category'] == 'bình thường'
+
+
+async def test_a_call_with_no_message_skips_the_llm(tmp_path, db):
     record = make_record(tmp_path, db)
     record.add_transcript('assistant', 'Chào bạn, bạn cần nhắn gì không ạ?')
     record.close()
-    openai, http = FakeOpenai(), FakeHttp()
+    openai = FakeOpenai()
 
-    await record.summarize_and_notify(openai_client=openai, http=http, **TELEGRAM)
+    await record.summarize(openai)
 
+    call = db.get_call(record.id)
     assert openai.calls == []
-    assert 'không để lại lời nhắn' in db.get_call(record.id)['summary']
-    assert 'không để lại lời nhắn' in http.posts[0][1]['text']
+    assert 'không để lại lời nhắn' in call['summary']
+    assert call['category'] == 'bình thường'
 
 
-async def test_when_the_summary_llm_fails_the_call_is_kept_and_the_callers_own_words_are_sent(tmp_path, db):
+async def test_when_the_summary_llm_fails_the_call_is_kept_with_the_callers_own_words(tmp_path, db):
     record = with_message(make_record(tmp_path, db))
     record.close()
-    openai, http = FakeOpenai(summary_error=RuntimeError('boom')), FakeHttp()
 
-    await record.summarize_and_notify(openai_client=openai, http=http, **TELEGRAM)
+    await record.summarize(FakeOpenai(summary_error=RuntimeError('boom')))
 
     call = db.get_call(record.id)
     assert len(call['transcript']) == 2
     assert 'nhờ anh Tuấn gọi lại gấp' in call['summary']
-    assert 'nhờ anh Tuấn gọi lại gấp' in http.posts[0][1]['text']
-
-
-async def test_without_telegram_settings_nothing_is_sent_but_the_call_is_still_saved(tmp_path, db):
-    record = with_message(make_record(tmp_path, db))
-    record.close()
-    http = FakeHttp()
-
-    await record.summarize_and_notify(
-        openai_client=FakeOpenai(), http=http, telegram_bot_token=None, telegram_chat_id=None,
-    )
-
-    assert http.posts == []
-    assert db.get_call(record.id)['caller_name'] == 'Anh Nam'
-
-
-async def test_a_telegram_network_error_is_logged_without_leaking_the_bot_token(tmp_path, db, caplog):
-    record = with_message(make_record(tmp_path, db))
-    record.close()
-    http = FakeHttp(error=OSError('cannot reach https://api.telegram.org/botTOKEN/sendMessage'))
-
-    await record.summarize_and_notify(openai_client=FakeOpenai(), http=http, **TELEGRAM)
-
-    assert 'telegram notification failed' in caplog.text
-    assert 'TOKEN' not in caplog.text
-    assert db.get_call(record.id)['caller_name'] == 'Anh Nam'
-
-
-async def test_a_telegram_failure_does_not_lose_the_summary(tmp_path, db):
-    record = with_message(make_record(tmp_path, db))
-    record.close()
-
-    await record.summarize_and_notify(openai_client=FakeOpenai(), http=FakeHttp(status=403), **TELEGRAM)
-
-    assert db.get_call(record.id)['caller_name'] == 'Anh Nam'
+    assert call['total_usd'] is not None, 'the call is still priced'
 
 
 def test_purge_removes_the_row_and_the_recording_of_calls_past_retention(tmp_path, db):

@@ -145,16 +145,22 @@ async def test_stats_count_calls_and_cost_per_period(client):
 async def test_settings_start_from_the_defaults(client):
     settings = await (await client.get('/api/settings')).json()
 
-    assert settings == {'owner_name': 'chủ máy', 'greeting': DEFAULT_GREETING, 'system_doc': 'doc'}
+    assert settings == {
+        'owner_name': 'chủ máy', 'greeting': DEFAULT_GREETING, 'system_doc': 'doc', 'blocked_numbers': [],
+    }
 
 
 async def test_saved_settings_are_returned_and_blank_restores_the_default(client):
     saved = await client.put('/api/settings', json={'owner_name': '  anh Tuấn ', 'greeting': 'Alo, Tuấn nghe.'})
     assert saved.status == 200
-    assert await saved.json() == {'owner_name': 'anh Tuấn', 'greeting': 'Alo, Tuấn nghe.', 'system_doc': 'doc'}
+    assert await saved.json() == {
+        'owner_name': 'anh Tuấn', 'greeting': 'Alo, Tuấn nghe.', 'system_doc': 'doc', 'blocked_numbers': [],
+    }
 
     reset = await (await client.put('/api/settings', json={'greeting': '', 'owner_name': None})).json()
-    assert reset == {'owner_name': 'chủ máy', 'greeting': DEFAULT_GREETING, 'system_doc': 'doc'}
+    assert reset == {
+        'owner_name': 'chủ máy', 'greeting': DEFAULT_GREETING, 'system_doc': 'doc', 'blocked_numbers': [],
+    }
 
 
 async def test_the_default_greeting_follows_the_owner_name(client):
@@ -197,3 +203,44 @@ async def test_the_next_call_uses_the_saved_greeting_and_persona(tmp_path):
         await ws.close()
     finally:
         await client.close()
+
+
+# --- blocked numbers ---------------------------------------------------------
+
+
+async def test_blocked_numbers_are_stored_as_bare_national_numbers_without_duplicates(client):
+    saved = await client.put('/api/settings', json={
+        'blocked_numbers': ['+84 901 234 567', '028-7654-321', '0901234567', '   '],
+    })
+
+    assert (await saved.json())['blocked_numbers'] == ['0901234567', '0287654321']
+    assert (await (await client.put('/api/settings', json={'blocked_numbers': None})).json())['blocked_numbers'] == []
+
+
+@pytest.mark.parametrize('value', ['0901234567', [901234567], ['1' * 21], ['0900000000'] * 501, {'a': 1}])
+async def test_blocked_numbers_must_be_a_short_list_of_phone_numbers(client, value):
+    assert (await client.put('/api/settings', json={'blocked_numbers': value})).status == 400
+
+
+async def test_a_blocked_caller_is_turned_away_and_the_attempt_is_filed_as_read_spam(client):
+    await client.put('/api/settings', json={'blocked_numbers': ['0901234567']})
+
+    answer = await client.post('/api/blocked', json={'caller': '+84901234567'})
+
+    assert await answer.json() == {'blocked': True}
+    [row] = client.app[DB].list_calls()
+    assert (row['caller'], row['category'], row['read']) == ('0901234567', 'spam', True)
+    assert 'chặn' in row['summary']
+
+
+async def test_other_callers_are_let_through_and_leave_no_trace(client):
+    await client.put('/api/settings', json={'blocked_numbers': ['0901234567']})
+
+    assert await (await client.post('/api/blocked', json={'caller': '0912345678'})).json() == {'blocked': False}
+    assert await (await client.post('/api/blocked', json={'caller': None})).json() == {'blocked': False}
+    assert client.app[DB].list_calls() == []
+
+
+async def test_the_block_check_needs_a_json_object(client):
+    assert (await client.post('/api/blocked', data=b'nope')).status == 400
+    assert (await client.post('/api/blocked', json=['0901234567'])).status == 400

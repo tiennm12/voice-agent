@@ -1,15 +1,20 @@
 import json
 import re
+import secrets
+from datetime import datetime
 from functools import partial
 
 from aiohttp import web
 
+from .call_record import SPAM
 from .config import effective_settings
 
 # The shape CallRecord gives its ids. Anything else never reaches the database or the disk.
 CALL_ID = re.compile(r'\d{8}T\d{6}_[0-9a-f]{8}')
-# Editable settings and their maximum length.
+# Editable text settings and their maximum length.
 TEXT_SETTINGS = {'owner_name': 80, 'greeting': 500, 'system_doc': 8000}
+MAX_BLOCKED_NUMBERS = 500
+MAX_NUMBER_DIGITS = 20
 
 json_response = partial(web.json_response, dumps=partial(json.dumps, ensure_ascii=False))
 
@@ -21,7 +26,47 @@ async def read_json(request):
         raise web.HTTPBadRequest(text='body must be JSON')
 
 
-def setup_api(app, db, config):
+def normalize_number(text):
+    """One spelling per phone number, so '+84 901 234 567' and '0901234567' compare equal.
+
+    ponytail: knows Vietnam's +84 prefix only. Use a phone-number library if callers ever come from elsewhere.
+    """
+    digits = re.sub(r'\D', '', text)
+    if digits.startswith('84') and len(digits) >= 11:
+        digits = '0' + digits[2:]
+    return digits
+
+
+def clean_blocked_numbers(value):
+    if not isinstance(value, list) or len(value) > MAX_BLOCKED_NUMBERS:
+        raise web.HTTPBadRequest(text=f'blocked_numbers must be a list of at most {MAX_BLOCKED_NUMBERS} numbers')
+    numbers = []
+    for entry in value:
+        if not isinstance(entry, str):
+            raise web.HTTPBadRequest(text='blocked_numbers must contain text only')
+        number = normalize_number(entry)
+        if len(number) > MAX_NUMBER_DIGITS:
+            raise web.HTTPBadRequest(text=f'not a phone number: {entry[:40]}')
+        if number and number not in numbers:
+            numbers.append(number)
+    return numbers or None
+
+
+def clean_setting(key, value):
+    """A setting as it will be stored; None means back to the default. Raises 400 on anything unexpected."""
+    if value is None or value == '':
+        if key in TEXT_SETTINGS or key == 'blocked_numbers':
+            return None
+    elif key == 'blocked_numbers':
+        return clean_blocked_numbers(value)
+    elif key in TEXT_SETTINGS:
+        if not isinstance(value, str) or len(value) > TEXT_SETTINGS[key]:
+            raise web.HTTPBadRequest(text=f'{key} must be text of at most {TEXT_SETTINGS[key]} characters')
+        return value.strip() or None
+    raise web.HTTPBadRequest(text=f'unknown setting: {key}')
+
+
+def setup_api(app, db, config, public_dir):
     """The dashboard's JSON API. Every route sits behind the session middleware."""
 
     def call_or_404(request):
@@ -75,19 +120,33 @@ def setup_api(app, db, config):
         body = await read_json(request)
         if not isinstance(body, dict):
             raise web.HTTPBadRequest(text='body must be an object')
-        changes = {}
-        for key, value in body.items():
-            if key not in TEXT_SETTINGS:
-                raise web.HTTPBadRequest(text=f'unknown setting: {key}')
-            if value is None or value == '':
-                changes[key] = None  # back to the default
-            elif not isinstance(value, str) or len(value) > TEXT_SETTINGS[key]:
-                raise web.HTTPBadRequest(text=f'{key} must be text of at most {TEXT_SETTINGS[key]} characters')
-            else:
-                changes[key] = value.strip() or None
-        db.set_settings(changes)
+        db.set_settings({key: clean_setting(key, value) for key, value in body.items()})
         return json_response(effective_settings(config, db.get_settings()))
 
+    async def check_blocked(request):
+        """Asked by the bridge page before it answers. A blocked caller is logged, never picked up."""
+        body = await read_json(request)
+        if not isinstance(body, dict):
+            raise web.HTTPBadRequest(text='body must be an object')
+        caller = normalize_number(str(body.get('caller') or ''))[:MAX_NUMBER_DIGITS]
+        if not caller or caller not in effective_settings(config, db.get_settings())['blocked_numbers']:
+            return json_response({'blocked': False})
+        now = datetime.now(config.tz)
+        session_id = secrets.token_hex(4)
+        call_id = f'{now:%Y%m%dT%H%M%S}_{session_id}'
+        db.save_call({
+            'id': call_id, 'session_id': session_id, 'caller': caller,
+            'started_at': now.isoformat(), 'ended_at': now.isoformat(), 'duration_seconds': 0,
+            'summary': 'Số nằm trong danh sách chặn: không nhấc máy.', 'urgency': 'thấp', 'category': SPAM,
+        })
+        db.mark_read(call_id)  # nothing to read: it must not show up as an unread call
+        return json_response({'blocked': True})
+
+    async def listen_page(request):
+        # One call on a page of its own, for call links; the page fetches the call itself.
+        return web.FileResponse(public_dir / 'listen.html')
+
+    app.router.add_get('/c/{id}', listen_page)
     app.router.add_get('/api/calls', list_calls)
     app.router.add_get('/api/calls/{id}', get_call)
     app.router.add_post('/api/calls/{id}/read', mark_read)
@@ -95,3 +154,4 @@ def setup_api(app, db, config):
     app.router.add_get('/api/stats', get_stats)
     app.router.add_get('/api/settings', get_settings)
     app.router.add_put('/api/settings', put_settings)
+    app.router.add_post('/api/blocked', check_blocked)

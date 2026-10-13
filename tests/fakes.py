@@ -119,6 +119,9 @@ class FakeHttp:
     async def text(self):
         return 'telegram says no'
 
+    async def close(self):
+        pass
+
 
 class FakeUpstream:
     """Hands the server fake STT/TTS sockets and a fake OpenAI client."""
@@ -148,14 +151,15 @@ class FakeUpstream:
         return self.tts[index]
 
 
-async def start_app(tmp_path, upstream=None, login=True, **env):
+async def start_app(tmp_path, upstream=None, login=True, http=None, **env):
     """A running app on fake upstreams. Returns (client, upstream); the client is logged in unless login=False."""
     from voice_agent.config import load_config
     from voice_agent.server import create_app
 
     upstream = upstream or FakeUpstream()
     config = load_config(env={**REQUIRED_ENV, 'DATA_DIR': str(tmp_path), **env}, read_system_doc=lambda: 'doc')
-    client = TestClient(TestServer(create_app(config, ws_connect=upstream.ws_connect, openai_client=upstream.openai)))
+    app = create_app(config, ws_connect=upstream.ws_connect, openai_client=upstream.openai, http=http)
+    client = TestClient(TestServer(app))
     await client.start_server()
     if login:
         response = await client.post('/login', data={'password': PASSWORD}, allow_redirects=False)

@@ -77,6 +77,10 @@
             <span class="hint">Viết {{OWNER_NAME}} ở chỗ cần tên chủ máy. Quy tắc tự cúp máy do hệ thống thêm vào.</span>
             <textarea name="system_doc" rows="16" maxlength="8000"></textarea>
           </label>
+          <label>Số bị chặn
+            <span class="hint">Mỗi dòng một số. Cuộc gọi từ các số này không được nhấc máy (áp dụng cho cầu nối tổng đài).</span>
+            <textarea name="blocked_numbers" rows="4" inputmode="tel"></textarea>
+          </label>
           <div class="buttons">
             <button>Lưu</button>
             <button type="button" id="resetSettings">Khôi phục mặc định</button>

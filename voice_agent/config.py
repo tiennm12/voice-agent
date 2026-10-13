@@ -31,6 +31,8 @@ class Config:
     dashboard_password: str
     retention_days: float
     utc_offset_hours: float
+    public_base_url: str | None
+    urgent_reminder_minutes: float
 
     @property
     def tz(self):
@@ -62,6 +64,7 @@ def effective_settings(config, stored):
         'owner_name': owner_name,
         'greeting': stored.get('greeting') or greeting_for(owner_name),
         'system_doc': stored.get('system_doc') or config.system_doc,
+        'blocked_numbers': stored.get('blocked_numbers') or [],
     }
 
 
@@ -112,4 +115,8 @@ def load_config(env=None, read_system_doc=_read_system_doc, read_pricing=_read_p
         # Every stored time uses this one offset (Vietnam, no DST), whatever zone the server's clock is in:
         # it keeps timestamps sortable as text and puts a call on the owner's calendar day.
         utc_offset_hours=float(env.get('UTC_OFFSET_HOURS') or 7),
+        # Where a phone reaches this server, e.g. https://vm.example.com. Optional: it only
+        # enables the "listen" button under Telegram notifications.
+        public_base_url=(env.get('PUBLIC_BASE_URL') or '').rstrip('/') or None,
+        urgent_reminder_minutes=float(env.get('URGENT_REMINDER_MINUTES') or 5),
     )

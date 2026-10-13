@@ -2,7 +2,7 @@
 // Rendering of a single call lives in call-view.js.
 
 const PAGE_SIZE = 30;
-const SETTING_NAMES = ['owner_name', 'greeting', 'system_doc'];
+const TEXT_SETTINGS = ['owner_name', 'greeting', 'system_doc'];
 
 let calls = [];
 let filter = '';
@@ -97,11 +97,28 @@ async function openCall(id) {
     const unread = element('button', '', 'Đánh dấu chưa đọc');
     unread.addEventListener('click', () => setRead(id, false));
     actions.append(unread);
+    if (call.caller) actions.append(blockButton(call.caller));
     view.querySelector('audio').after(actions);
     if (!call.read) await setRead(id, true);
   } catch (err) {
     detail.replaceChildren(element('p', 'status error', `Không mở được cuộc gọi: ${err.message}`));
   }
+}
+
+function blockButton(caller) {
+  const button = element('button', '', 'Chặn số này');
+  button.addEventListener('click', async () => {
+    button.disabled = true;
+    try {
+      const settings = await api('/api/settings');
+      await api('/api/settings', { method: 'PUT', body: { blocked_numbers: [...settings.blocked_numbers, caller] } });
+      button.textContent = 'Đã chặn';
+    } catch (err) {
+      button.textContent = `Không chặn được: ${err.message}`;
+      button.disabled = false;
+    }
+  });
+  return button;
 }
 
 async function setRead(id, read) {
@@ -157,7 +174,8 @@ document.getElementById('statsBy').addEventListener('change', loadStats);
 
 function fillSettings(settings) {
   const form = document.getElementById('settingsForm');
-  for (const name of SETTING_NAMES) form.elements[name].value = settings[name];
+  for (const name of TEXT_SETTINGS) form.elements[name].value = settings[name];
+  form.elements.blocked_numbers.value = settings.blocked_numbers.join('\n');
 }
 
 async function loadSettings() {
@@ -181,11 +199,13 @@ async function saveSettings(values, done) {
 document.getElementById('settingsForm').addEventListener('submit', (event) => {
   event.preventDefault();
   const form = event.currentTarget;
-  const values = Object.fromEntries(SETTING_NAMES.map((name) => [name, form.elements[name].value]));
+  const values = Object.fromEntries(TEXT_SETTINGS.map((name) => [name, form.elements[name].value]));
+  values.blocked_numbers = form.elements.blocked_numbers.value.split('\n');
   saveSettings(values, 'Đã lưu. Áp dụng từ cuộc gọi kế tiếp.');
 });
 document.getElementById('resetSettings').addEventListener('click', () => {
-  const defaults = Object.fromEntries(SETTING_NAMES.map((name) => [name, null]));
+  // The blocked list is the owner's data, not a default to restore: it is left alone.
+  const defaults = Object.fromEntries(TEXT_SETTINGS.map((name) => [name, null]));
   saveSettings(defaults, 'Đã khôi phục mặc định.');
 });
 
