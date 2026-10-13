@@ -112,6 +112,8 @@ def create_app(config, *, ws_connect=None, openai_client=None, http=None):
             transcribe_model=config.openai_transcribe_model,
             ws_connect=upstream['ws_connect'],
             language=None if settings['language'] == 'auto' else settings['language'],
+            vad_silence_ms=config.vad_silence_ms,
+            vad_threshold=config.vad_threshold,
         )
         stt.on('usage', record.add_stt_usage)
         # The bridge page asks for 'pcm'; anything unrecognized gets the mic page's MP3.
@@ -124,11 +126,14 @@ def create_app(config, *, ws_connect=None, openai_client=None, http=None):
             model_id=config.elevenlabs_model_id,
             ws_connect=upstream['ws_connect'],
             audio=audio,
+            auto_mode=config.elevenlabs_auto_mode,
         )
         orchestrator = SessionOrchestrator(
             system_prompt=build_system_prompt(settings['system_doc'], settings['owner_name'], settings['language']),
             stt_client=stt,
-            llm_stream=partial(stream_completion, upstream['openai'], on_usage=record.add_llm_usage),
+            llm_stream=partial(
+                stream_completion, upstream['openai'], model=config.openai_chat_model, on_usage=record.add_llm_usage,
+            ),
             tts_client=tts,
             session_id=session_id,
             greeting=pick_greeting(settings, record.started_at),

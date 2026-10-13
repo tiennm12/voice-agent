@@ -5,6 +5,8 @@ Usage (from the repo root): python scripts/probe.py PORT STAY_SECONDS [options]
   --barge TEXT  spoken --barge-delay seconds after the agent starts replying to --say
   --meta JSON   sent as the first text frame (e.g. '{"type":"callMeta","caller":"0901234567"}')
   --no-login    skip logging in, to check that the server refuses the call
+  --until-reply hang up as soon as the reply to --say starts (for latency runs)
+Prints "reply latency": from the caller's last word to the first audio of the answer.
 Reads DASHBOARD_PASSWORD and the ElevenLabs settings from the environment or ./.env.
 Streams silence the rest of the time, like an open mic. Exits when the server closes
 the socket, or after STAY_SECONDS.
@@ -32,6 +34,7 @@ parser.add_argument('--barge')
 parser.add_argument('--meta')
 parser.add_argument('--barge-delay', type=float, default=1.5)
 parser.add_argument('--no-login', action='store_true')
+parser.add_argument('--until-reply', action='store_true')
 args = parser.parse_args()
 
 FRAME = 960  # 480 samples PCM16 = 20ms @ 24kHz
@@ -86,6 +89,7 @@ async def main():
             await ws.send_str(args.meta)
 
         speech = asyncio.Queue()  # PCM buffers waiting to be "spoken" into the mic
+        said = {'ended_at': None, 'answered': False}  # for the reply-latency line
 
         async def mic():
             current = b''
@@ -94,7 +98,10 @@ async def main():
                 if not current and not speech.empty():
                     current = speech.get_nowait()
                     print(f'PROBE {ms()}ms >>> caller starts speaking ({len(current) / 48000:.1f}s)')
+                was_speaking = bool(current)
                 frame, current = (current[:FRAME], current[FRAME:]) if current else (SILENCE, b'')
+                if was_speaking and not current:
+                    said['ended_at'] = time.monotonic()
                 try:
                     await ws.send_bytes(frame.ljust(FRAME, b'\0'))
                 except ConnectionError:
@@ -115,6 +122,12 @@ async def main():
                             print(f'PROBE {ms()}ms first audio chunk of this turn')
                         audio_bytes += len(msg.data)
                         audio_since_state += len(msg.data)
+                        if said['ended_at'] and not said['answered']:
+                            said['answered'] = True
+                            waited = int((time.monotonic() - said['ended_at']) * 1000)
+                            print(f'PROBE reply latency {waited}ms (caller stopped talking -> first audio of the reply)')
+                            if args.until_reply:
+                                raise TimeoutError
                     elif msg.type == aiohttp.WSMsgType.TEXT:
                         event = json.loads(msg.data)
                         print(f'PROBE {ms()}ms {json.dumps(event, ensure_ascii=False)}')
@@ -132,7 +145,7 @@ async def main():
                         break
                 print(f'PROBE {ms()}ms server closed the socket (code {ws.close_code})')
         except TimeoutError:
-            print(f'PROBE stayed {args.stay}s, hanging up from the caller side')
+            print('PROBE hanging up from the caller side')
         finally:
             mic_task.cancel()
             await ws.close()

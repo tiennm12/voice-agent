@@ -63,6 +63,8 @@ class SessionOrchestrator:
         self._hangup_after_turn = False  # the reply being spoken is the goodbye
         self._hangup_timer = None
         self._max_call_timer = None
+        self._speech_stopped_at = None  # when the caller last went quiet, until a turn claims it
+        self._marks = None  # timestamps of the turn whose first audio has not arrived yet
         # ponytail: when the caller will have heard everything sent so far, estimated
         # from bytes sent (ignores network and client buffering — GOODBYE_GRACE and
         # silence_timeout absorb it). Upgrade: have the client report playback end.
@@ -151,6 +153,7 @@ class SessionOrchestrator:
         self._disarm_hangup()
 
     def _on_speech_stopped(self):
+        self._speech_stopped_at = time.monotonic()
         if self._state.current == 'listening':
             self._arm_hangup(self._silence_timeout)
 
@@ -177,8 +180,33 @@ class SessionOrchestrator:
             self._state.transition('CALL_ENDED')
 
     def _on_audio_chunk(self, data):
-        self._playback_ends_at = max(self._playback_ends_at, time.monotonic()) + len(data) / self._tts.bytes_per_second
+        now = time.monotonic()
+        self._playback_ends_at = max(self._playback_ends_at, now) + len(data) / self._tts.bytes_per_second
         self._send_audio(data)
+        if self._marks and 'text' in self._marks:  # the first audio of the turn: its latency is now known
+            marks, self._marks = self._marks, None
+            self._log_latency(marks, now)
+
+    def _log_latency(self, marks, audio_at):
+        """One line per turn, splitting up the wait the caller sat through.
+
+        stt_ms: caller stopped talking -> transcript. llm_ms: transcript -> first token.
+        tts_ms: first text sent -> first audio back. response_ms: caller stopped -> first audio.
+        """
+        def ms(start, end):
+            return round((end - start) * 1000)
+
+        if marks['kickoff']:
+            log.info('%s [latency] greeting response_ms=%d', self._tag, ms(marks['transcript'], audio_at))
+            return
+        log.info(
+            '%s [latency] stt_ms=%d llm_ms=%d tts_ms=%d response_ms=%d',
+            self._tag,
+            ms(marks['heard'], marks['transcript']),
+            ms(marks['transcript'], marks.get('token', marks['text'])),
+            ms(marks['text'], audio_at),
+            ms(marks['heard'], audio_at),
+        )
 
     def _on_tts_turn_complete(self):
         if self._state.current == 'speaking':
@@ -194,10 +222,15 @@ class SessionOrchestrator:
     # --- turns -------------------------------------------------------------
 
     def _start_turn(self, user_text, is_kickoff=False):
-        self._turn = asyncio.create_task(self._run_turn(user_text, is_kickoff))
+        now = time.monotonic()
+        # Without a speech_stopped event the clock starts at the transcript.
+        self._marks = {'heard': self._speech_stopped_at or now, 'transcript': now, 'kickoff': is_kickoff}
+        self._speech_stopped_at = None
+        self._turn = asyncio.create_task(self._run_turn(user_text, is_kickoff, self._marks))
         self._turn.add_done_callback(self._on_turn_done)
 
     def _abandon_turn(self):
+        self._marks = None
         turn, self._turn = self._turn, None
         if turn and not turn.done():
             turn.cancel()
@@ -233,13 +266,11 @@ class SessionOrchestrator:
         self._send_control({'type': 'error', 'message': str(connect.exception())})
         self._back_to_listening()
 
-    async def _run_turn(self, user_text, is_kickoff):
-        """Speak one reply. A kickoff turn speaks user_text itself instead of asking the LLM."""
-        started_at = time.monotonic()
+    async def _run_turn(self, user_text, is_kickoff, marks):
+        """Speak one reply. A kickoff turn speaks user_text itself instead of asking the LLM.
 
-        def elapsed_ms():
-            return round((time.monotonic() - started_at) * 1000)
-
+        `marks` collects the timestamps of this turn for the latency log.
+        """
         self._hangup_after_turn = False
         assistant_text = ''
         spoken = ''  # assistant_text up to the hangup marker
@@ -259,7 +290,7 @@ class SessionOrchestrator:
                 speaking = True
                 self._state.transition('TTS_STARTED')
                 self._send_control({'type': 'state', 'state': 'speaking'})
-                log.info('%s [latency] first_tts_chunk_ms %d', self._tag, elapsed_ms())
+                marks['text'] = time.monotonic()
             await self._tts.send_text(text)
 
         async def flush():
@@ -272,8 +303,8 @@ class SessionOrchestrator:
             )
             async with aclosing(source) as tokens:
                 async for token in tokens:
-                    if not assistant_text and not is_kickoff:
-                        log.info('%s [latency] first_llm_token_ms %d', self._tag, elapsed_ms())
+                    if not is_kickoff:
+                        marks.setdefault('token', time.monotonic())
                     assistant_text += token
                     # Everything from the first '[' on is the hangup marker (possibly split
                     # across tokens) or stray text after it: never speak it.

@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from datetime import timedelta, timezone
 from pathlib import Path
 
+from .llm_client import CHAT_MODEL
+
 ROOT = Path(__file__).resolve().parent.parent
 
 # The LLM ends its final reply with this marker; the orchestrator strips it from the
@@ -16,9 +18,13 @@ class Config:
     openai_api_key: str
     openai_realtime_model: str
     openai_transcribe_model: str
+    openai_chat_model: str
+    vad_silence_ms: int | None
+    vad_threshold: float | None
     elevenlabs_api_key: str
     elevenlabs_voice_id: str
     elevenlabs_model_id: str
+    elevenlabs_auto_mode: bool
     port: int
     owner_name: str
     system_doc: str
@@ -90,9 +96,15 @@ def load_config(env=None, read_system_doc=_read_system_doc, read_pricing=_read_p
         openai_api_key=env['OPENAI_API_KEY'],
         openai_realtime_model=env.get('OPENAI_REALTIME_MODEL') or 'gpt-realtime-2.1',
         openai_transcribe_model=env.get('OPENAI_TRANSCRIBE_MODEL') or 'gpt-4o-transcribe',
+        # The model that talks to the caller. The llm rates in config/pricing.json must match it.
+        openai_chat_model=env.get('OPENAI_CHAT_MODEL') or CHAT_MODEL,
+        # Turn-detection tuning; unset leaves the OpenAI defaults (500ms of silence, threshold 0.5).
+        vad_silence_ms=int(env['VAD_SILENCE_MS']) if env.get('VAD_SILENCE_MS') else None,
+        vad_threshold=float(env['VAD_THRESHOLD']) if env.get('VAD_THRESHOLD') else None,
         elevenlabs_api_key=env['ELEVENLABS_API_KEY'],
         elevenlabs_voice_id=env['ELEVENLABS_VOICE_ID'],
         elevenlabs_model_id=env.get('ELEVENLABS_MODEL_ID') or 'eleven_flash_v2_5',
+        elevenlabs_auto_mode=(env.get('ELEVENLABS_AUTO_MODE') or '').lower() in ('1', 'true', 'yes'),
         port=int(env.get('PORT') or 3000),
         # owner_name and system_doc are only the defaults: the dashboard's settings override them per call.
         owner_name=env.get('OWNER_NAME') or 'chủ máy',

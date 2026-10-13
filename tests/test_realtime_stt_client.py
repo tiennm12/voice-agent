@@ -173,3 +173,20 @@ async def test_without_a_language_the_transcription_is_left_to_detect_it():
     await client.connect()
 
     assert ws.sent[0]['session']['audio']['input']['transcription'] == {'model': 'gpt-4o-transcribe'}
+
+
+async def test_turn_detection_can_be_tuned_and_is_left_to_the_api_defaults_otherwise():
+    default_ws, tuned_ws = FakeWs(), FakeWs()
+    ws_connect, _ = fake_ws_connect(default_ws, tuned_ws)
+    settings = dict(api_key='sk-test', model='gpt-realtime-2.1', transcribe_model='gpt-4o-transcribe', ws_connect=ws_connect)
+
+    await RealtimeSttClient(**settings).connect()
+    await RealtimeSttClient(**settings, vad_silence_ms=300, vad_threshold=0.7).connect()
+
+    assert default_ws.sent[0]['session']['audio']['input']['turn_detection'] == {
+        'type': 'server_vad', 'create_response': False, 'interrupt_response': False,
+    }
+    assert tuned_ws.sent[0]['session']['audio']['input']['turn_detection'] == {
+        'type': 'server_vad', 'create_response': False, 'interrupt_response': False,
+        'silence_duration_ms': 300, 'threshold': 0.7,
+    }

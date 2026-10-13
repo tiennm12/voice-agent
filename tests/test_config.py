@@ -137,3 +137,21 @@ def test_the_system_prompt_can_tell_the_llm_to_answer_in_the_callers_language():
     last_line = follow_caller.splitlines()[-1]
     assert 'ngôn ngữ người gọi' in last_line and 'tiếng Anh' in last_line
     assert vietnamese_only.splitlines()[-1] != last_line
+
+
+def test_load_config_latency_knobs_are_off_unless_set():
+    config = load_config(env=REQUIRED_ENV, read_system_doc=lambda: 'doc')
+    assert (config.openai_chat_model, config.vad_silence_ms, config.vad_threshold) == ('gpt-4.1-mini', None, None)
+
+    config = load_config(
+        env={**REQUIRED_ENV, 'OPENAI_CHAT_MODEL': 'gpt-4.1-nano', 'VAD_SILENCE_MS': '300', 'VAD_THRESHOLD': '0.7'},
+        read_system_doc=lambda: 'doc',
+    )
+    assert (config.openai_chat_model, config.vad_silence_ms, config.vad_threshold) == ('gpt-4.1-nano', 300, 0.7)
+
+
+def test_load_config_tts_auto_mode_is_opt_in():
+    assert load_config(env=REQUIRED_ENV, read_system_doc=lambda: 'doc').elevenlabs_auto_mode is False
+    for value, expected in (('1', True), ('true', True), ('0', False), ('', False)):
+        config = load_config(env={**REQUIRED_ENV, 'ELEVENLABS_AUTO_MODE': value}, read_system_doc=lambda: 'doc')
+        assert config.elevenlabs_auto_mode is expected, value

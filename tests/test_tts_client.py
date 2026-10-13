@@ -158,3 +158,15 @@ async def test_pcm_audio_can_be_requested_for_clients_that_play_through_web_audi
 
     assert calls[0][0].endswith('output_format=pcm_24000')
     assert client.bytes_per_second == 48000  # 24kHz, 16-bit mono
+
+
+async def test_auto_mode_asks_elevenlabs_to_speak_each_chunk_as_it_arrives():
+    ws = FakeWs()
+    ws_connect, calls = fake_ws_connect(ws)
+    client = TtsClient(
+        api_key='xi-test', voice_id='voice123', model_id='eleven_flash_v2_5', ws_connect=ws_connect, auto_mode=True,
+    )
+
+    await client.connect()
+
+    assert calls[0][0].endswith('output_format=mp3_44100_128&auto_mode=true')

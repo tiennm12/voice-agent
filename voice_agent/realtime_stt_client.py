@@ -10,10 +10,19 @@ class RealtimeSttClient(JsonWsClient):
     transcription's billing usage dict), 'error' (exception), 'disconnected'.
     """
 
-    def __init__(self, *, api_key, model, transcribe_model, ws_connect, language='vi'):
+    def __init__(
+        self, *, api_key, model, transcribe_model, ws_connect, language='vi', vad_silence_ms=None, vad_threshold=None,
+    ):
         super().__init__(ws_connect)
         self._api_key = api_key
         self._model = model
+        self._turn_detection = {'type': 'server_vad', 'create_response': False, 'interrupt_response': False}
+        # Both stay at the API defaults unless tuned. A shorter silence answers sooner
+        # but cuts in on pauses; a higher threshold ignores more line noise and echo.
+        if vad_silence_ms is not None:
+            self._turn_detection['silence_duration_ms'] = vad_silence_ms
+        if vad_threshold is not None:
+            self._turn_detection['threshold'] = vad_threshold
         # A language constrains/guides the transcription to it; None lets the model
         # detect it per utterance (less accurate for Vietnamese, hence the default).
         self._transcription = {'model': transcribe_model} | ({'language': language} if language else {})
@@ -31,11 +40,7 @@ class RealtimeSttClient(JsonWsClient):
                     'audio': {
                         'input': {
                             'format': {'type': 'audio/pcm', 'rate': 24000},
-                            'turn_detection': {
-                                'type': 'server_vad',
-                                'create_response': False,
-                                'interrupt_response': False,
-                            },
+                            'turn_detection': self._turn_detection,
                             'transcription': self._transcription,
                             # 'near_field' suits a phone mic held close to the mouth (vs.
                             # 'far_field' for laptop/conference-room mics) and filters ambient

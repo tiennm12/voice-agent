@@ -397,3 +397,21 @@ async def test_a_finished_call_is_announced_on_telegram_with_a_working_link(tmp_
         assert opened.status == 200
     finally:
         await client.close()
+
+
+async def test_the_configured_chat_model_and_vad_tuning_reach_the_upstreams(tmp_path):
+    client, upstream = await start_app(
+        tmp_path, FakeUpstream(reply='Dạ.'), OPENAI_CHAT_MODEL='gpt-4.1-nano', VAD_SILENCE_MS='300',
+    )
+    try:
+        ws = await client.ws_connect('/ws')
+        greeting_tts = await upstream.tts_socket(0)
+        greeting_tts.feed({'isFinal': True})
+        upstream.stt.feed({'type': 'conversation.item.input_audio_transcription.completed', 'transcript': 'Alo'})
+        await upstream.tts_socket(1)
+
+        assert upstream.openai.calls[0]['model'] == 'gpt-4.1-nano'
+        assert upstream.stt.sent[0]['session']['audio']['input']['turn_detection']['silence_duration_ms'] == 300
+        await ws.close()
+    finally:
+        await client.close()

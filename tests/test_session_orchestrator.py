@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from types import SimpleNamespace
 
 from fakes import tick
@@ -605,3 +606,54 @@ async def test_playback_time_is_estimated_from_the_tts_clients_audio_byte_rate()
     assert ctx.hangups == [], 'the caller is still hearing the reply'
     await asyncio.sleep(0.5)
     assert ctx.hangups == [True], '0.5s of audio + 0.05s of silence have long passed'
+
+
+# --- latency log -----------------------------------------------------------
+
+
+def latency_lines(caplog):
+    return [record.getMessage() for record in caplog.records if '[latency]' in record.getMessage()]
+
+
+async def test_each_reply_logs_where_its_response_time_went(caplog):
+    caplog.set_level(logging.INFO)
+    ctx = make(llm=FakeLlm('Xin chào.', DONE))
+
+    await ctx.orchestrator.start()
+    ctx.stt.emit('speech_stopped')  # the caller finished talking…
+    await asyncio.sleep(0.06)
+    ctx.stt.emit('transcript_final', 'Chào bạn')  # …the transcript arrives 60ms later
+    await tick()
+    ctx.tts.emit('audio_chunk', b'first')
+    ctx.tts.emit('audio_chunk', b'second')
+
+    [line] = latency_lines(caplog)  # once per turn, at the first audio
+    fields = dict(part.split('=') for part in line.split()[2:])
+    assert set(fields) == {'stt_ms', 'llm_ms', 'tts_ms', 'response_ms'}
+    assert int(fields['stt_ms']) >= 50
+    assert int(fields['response_ms']) >= int(fields['stt_ms'])
+
+
+async def test_a_reply_without_a_speech_stopped_event_counts_from_the_transcript(caplog):
+    caplog.set_level(logging.INFO)
+    ctx = make(llm=FakeLlm('Xin chào.', DONE))
+
+    await ctx.orchestrator.start()
+    ctx.stt.emit('transcript_final', 'Chào bạn')
+    await tick()
+    ctx.tts.emit('audio_chunk', b'first')
+
+    [line] = latency_lines(caplog)
+    assert 'stt_ms=0 ' in line
+
+
+async def test_the_greeting_logs_its_time_to_first_audio(caplog):
+    caplog.set_level(logging.INFO)
+    ctx = make(greeting='Chào bạn.')
+
+    await ctx.orchestrator.start()
+    await tick()
+    ctx.tts.emit('audio_chunk', b'first')
+
+    [line] = latency_lines(caplog)
+    assert ' greeting ' in line and 'response_ms=' in line

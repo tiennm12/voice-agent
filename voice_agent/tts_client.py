@@ -16,18 +16,23 @@ class TtsClient(JsonWsClient):
     Emits: 'audio_chunk' (bytes), 'turn_complete', 'error' (exception), 'disconnected'.
     """
 
-    def __init__(self, *, api_key, voice_id, model_id, ws_connect, audio='mp3'):
+    def __init__(self, *, api_key, voice_id, model_id, ws_connect, audio='mp3', auto_mode=False):
         super().__init__(ws_connect)
         self._api_key = api_key
         self._voice_id = voice_id
         self._model_id = model_id
         self._output_format, self.bytes_per_second = AUDIO_FORMATS[audio]
+        # Without it ElevenLabs holds text back until it has buffered enough characters
+        # (120 by default); with it every chunk is spoken as it arrives. Meant for whole
+        # clauses, which is what the text chunker sends.
+        self._auto_mode = auto_mode
         self.characters_sent = 0  # what ElevenLabs bills on
 
     async def connect(self):
         await self._open(
             f'wss://api.elevenlabs.io/v1/text-to-speech/{self._voice_id}/stream-input'
-            f'?model_id={self._model_id}&output_format={self._output_format}',
+            f'?model_id={self._model_id}&output_format={self._output_format}'
+            + ('&auto_mode=true' if self._auto_mode else ''),
             {'xi-api-key': self._api_key},
             {'text': ' ', 'voice_settings': {'stability': 0.5, 'similarity_boost': 0.75}},
         )
