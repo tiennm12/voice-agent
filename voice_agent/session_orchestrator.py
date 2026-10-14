@@ -199,14 +199,14 @@ class SessionOrchestrator:
         if marks['kickoff']:
             log.info('%s [latency] greeting response_ms=%d', self._tag, ms(marks['transcript'], audio_at))
             return
-        log.info(
-            '%s [latency] stt_ms=%d llm_ms=%d tts_ms=%d response_ms=%d',
-            self._tag,
-            ms(marks['heard'], marks['transcript']),
-            ms(marks['transcript'], marks.get('token', marks['text'])),
-            ms(marks['text'], audio_at),
-            ms(marks['heard'], audio_at),
-        )
+        latency = {
+            'stt_ms': ms(marks['heard'], marks['transcript']),
+            'llm_ms': ms(marks['transcript'], marks.get('token', marks['text'])),
+            'tts_ms': ms(marks['text'], audio_at),
+            'response_ms': ms(marks['heard'], audio_at),
+        }
+        log.info('%s [latency] %s', self._tag, ' '.join(f'{name}={value}' for name, value in latency.items()))
+        self._send_control({'type': 'latency', **latency})  # the test page shows it
 
     def _on_tts_turn_complete(self):
         if self._state.current == 'speaking':

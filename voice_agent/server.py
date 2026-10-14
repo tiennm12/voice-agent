@@ -14,7 +14,8 @@ from openai import AsyncOpenAI
 from .api import setup_api
 from .auth import load_secret, make_call_link, setup_auth
 from .call_record import CallRecord, purge_old_calls
-from .config import build_system_prompt, load_config
+from .config import build_system_prompt, load_config, with_overrides
+from .elevenlabs_stt_client import ElevenLabsSttClient
 from .db import Database
 from .llm_client import stream_completion
 from .realtime_stt_client import RealtimeSttClient
@@ -103,16 +104,28 @@ def create_app(config, *, ws_connect=None, openai_client=None, http=None):
 
         # Read per call, so what the owner saves in the dashboard applies from the next call on.
         settings = effective_settings(config, db.get_settings())
-        stt = RealtimeSttClient(
-            api_key=config.openai_api_key,
-            model=config.openai_realtime_model,
-            transcribe_model=config.openai_transcribe_model,
-            ws_connect=upstream['ws_connect'],
-            language=None if settings['language'] == 'auto' else settings['language'],
-            vad_silence_ms=config.vad_silence_ms,
-            vad_threshold=config.vad_threshold,
-            min_logprob=config.stt_min_logprob,
-        )
+        # The test page (call.html) may change the pipeline for this one call.
+        cfg, overrides = with_overrides(config, request.query)
+        language = None if settings['language'] == 'auto' else settings['language']
+        if cfg.stt_provider == 'elevenlabs':
+            stt = ElevenLabsSttClient(
+                api_key=cfg.elevenlabs_api_key,
+                ws_connect=upstream['ws_connect'],
+                language=language,
+                vad_silence_ms=cfg.vad_silence_ms,
+                vad_threshold=cfg.vad_threshold,
+            )
+        else:
+            stt = RealtimeSttClient(
+                api_key=cfg.openai_api_key,
+                model=cfg.openai_realtime_model,
+                transcribe_model=cfg.openai_transcribe_model,
+                ws_connect=upstream['ws_connect'],
+                language=language,
+                vad_silence_ms=cfg.vad_silence_ms,
+                vad_threshold=cfg.vad_threshold,
+                min_logprob=cfg.stt_min_logprob,
+            )
         stt.on('usage', record.add_stt_usage)
         # The bridge page asks for 'pcm'; anything unrecognized gets the mic page's MP3.
         audio = request.query.get('audio')
@@ -121,10 +134,10 @@ def create_app(config, *, ws_connect=None, openai_client=None, http=None):
         tts = TtsClient(
             api_key=config.elevenlabs_api_key,
             voice_id=settings['voice_id'],
-            model_id=config.elevenlabs_model_id,
+            model_id=cfg.elevenlabs_model_id,
             ws_connect=upstream['ws_connect'],
             audio=audio,
-            auto_mode=config.elevenlabs_auto_mode,
+            auto_mode=cfg.elevenlabs_auto_mode,
         )
         orchestrator = SessionOrchestrator(
             system_prompt=build_system_prompt(settings['system_doc'], settings['owner_name'], settings['language']),
@@ -132,8 +145,8 @@ def create_app(config, *, ws_connect=None, openai_client=None, http=None):
             llm_stream=partial(
                 stream_completion,
                 upstream['openai'],
-                model=config.openai_chat_model,
-                reasoning_effort=config.openai_reasoning_effort,
+                model=cfg.openai_chat_model,
+                reasoning_effort=cfg.openai_reasoning_effort,
                 on_usage=record.add_llm_usage,
             ),
             tts_client=tts,
@@ -146,7 +159,7 @@ def create_app(config, *, ws_connect=None, openai_client=None, http=None):
             max_call=config.max_call,
         )
 
-        log.info('[%s] [server] new call connected', session_id)
+        log.info('[%s] [server] new call connected%s', session_id, f' with overrides {overrides}' if overrides else '')
         sender = asyncio.create_task(send_outbox())
         try:
             try:

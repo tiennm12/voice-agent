@@ -2,7 +2,7 @@ from datetime import timedelta
 
 import pytest
 
-from voice_agent.config import HANGUP_MARKER, build_messages, build_system_prompt, load_config
+from voice_agent.config import HANGUP_MARKER, build_messages, build_system_prompt, load_config, with_overrides
 
 from fakes import REQUIRED_ENV
 
@@ -187,3 +187,19 @@ def test_the_shipped_price_table_is_the_default_chat_models():
     config = load_config(env=REQUIRED_ENV)
     # gpt-6-luna on 2026-10-13: $0.10 in, $0.50 out per 1M tokens.
     assert (config.pricing['llm']['input_per_1m_tokens'], config.pricing['llm']['output_per_1m_tokens']) == (0.10, 0.50)
+
+
+def test_with_overrides_applies_valid_test_page_settings_and_ignores_the_rest():
+    config = load_config(env=REQUIRED_ENV, read_system_doc=lambda: 'doc')
+
+    cfg, changes = with_overrides(config, {
+        'stt_provider': 'elevenlabs', 'vad_silence_ms': '300', 'vad_threshold': '7',  # out of range
+        'openai_chat_model': 'gpt-4.1-mini', 'elevenlabs_auto_mode': '1', 'elevenlabs_api_key': 'stolen', 'stt_min_logprob': '',
+    })
+
+    assert changes == {
+        'stt_provider': 'elevenlabs', 'vad_silence_ms': 300, 'openai_chat_model': 'gpt-4.1-mini',
+        'openai_reasoning_effort': None, 'elevenlabs_auto_mode': True,
+    }
+    assert cfg.elevenlabs_api_key == config.elevenlabs_api_key
+    assert config.stt_provider == 'openai'  # the shared config is not touched

@@ -52,7 +52,10 @@ async function startCall({ inputStream, meta, audio, player: callPlayer, onEnded
     encoderNode.connect(silentGain).connect(audioContext.destination);
 
     const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const callSocket = new WebSocket(`${wsProtocol}//${location.host}/ws${audio ? `?audio=${audio}` : ''}`);
+    // The test page (call.html) sets window.callOptions: pipeline settings for this call only.
+    const query = new URLSearchParams(window.callOptions || {});
+    if (audio) query.set('audio', audio);
+    const callSocket = new WebSocket(`${wsProtocol}//${location.host}/ws${query.size ? `?${query}` : ''}`);
     callSocket.binaryType = 'arraybuffer';
     socket = callSocket;
     // A socket the page has moved on from (call ended, maybe a new one started) can
@@ -161,6 +164,9 @@ function handleServerMessage(event) {
     if (msg.type === 'transcript') appendTranscript(msg.role || 'user', msg.text);
     if (msg.type === 'state') setStatus(msg.state);
     if (msg.type === 'error') appendTranscript('error', msg.message);
+    if (msg.type === 'latency') {
+      appendTranscript('latency', `chờ ${msg.response_ms}ms (stt ${msg.stt_ms} · llm ${msg.llm_ms} · tts ${msg.tts_ms})`);
+    }
     if (msg.type === 'interrupt') player.stop();
     return;
   }

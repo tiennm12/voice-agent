@@ -5,6 +5,7 @@ Usage (from the repo root): python scripts/probe.py PORT STAY_SECONDS [options]
   --barge TEXT  spoken --barge-delay seconds after the agent starts replying to --say
   --meta JSON   sent as the first text frame (e.g. '{"type":"callMeta","caller":"0901234567"}')
   --no-login    skip logging in, to check that the server refuses the call
+  --query QS    settings for this call as a query string, e.g. 'stt_provider=elevenlabs&vad_silence_ms=300'
   --until-reply hang up as soon as the reply to --say starts (for latency runs)
 Prints "reply latency": from the caller's last word to the first audio of the answer.
 Reads DASHBOARD_PASSWORD and the ElevenLabs settings from the environment or ./.env.
@@ -34,6 +35,7 @@ parser.add_argument('--barge')
 parser.add_argument('--meta')
 parser.add_argument('--barge-delay', type=float, default=1.5)
 parser.add_argument('--no-login', action='store_true')
+parser.add_argument('--query', default='')
 parser.add_argument('--until-reply', action='store_true')
 args = parser.parse_args()
 
@@ -72,7 +74,7 @@ async def main():
                     await session.post(
                         f'{base}/login', data={'password': os.environ['DASHBOARD_PASSWORD']}, allow_redirects=False,
                     )
-                ws = await session.ws_connect(f'{base}/ws')
+                ws = await session.ws_connect(f'{base}/ws?{args.query}')
                 break
             except aiohttp.WSServerHandshakeError as refused:
                 sys.exit(f'PROBE: server refused the call: HTTP {refused.status}')

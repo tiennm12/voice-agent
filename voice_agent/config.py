@@ -1,6 +1,6 @@
 import json
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import timedelta, timezone
 from pathlib import Path
 
@@ -18,6 +18,7 @@ class Config:
     openai_api_key: str
     openai_realtime_model: str
     openai_transcribe_model: str
+    stt_provider: str
     openai_chat_model: str
     openai_reasoning_effort: str | None
     vad_silence_ms: int | None
@@ -45,6 +46,42 @@ class Config:
     @property
     def tz(self):
         return timezone(timedelta(hours=self.utc_offset_hours))
+
+
+# What the test page (call.html) may change for one call, as query parameters of /ws:
+# name -> allowed values, or name -> (type, min, max). Anything else is ignored.
+OVERRIDE_CHOICES = {
+    'stt_provider': {'openai', 'elevenlabs'},
+    'openai_transcribe_model': {'gpt-4o-transcribe', 'gpt-4o-mini-transcribe'},
+    'openai_chat_model': {'gpt-6-luna', 'gpt-4.1-mini', 'gpt-4o-mini', 'gpt-4.1-nano'},
+    'elevenlabs_model_id': {'eleven_flash_v2_5', 'eleven_turbo_v2_5'},
+}
+OVERRIDE_RANGES = {
+    'vad_silence_ms': (int, 100, 3000),
+    'vad_threshold': (float, 0.0, 1.0),
+    'stt_min_logprob': (float, -5.0, 0.0),
+}
+
+
+def with_overrides(config, query):
+    """A copy of config with the valid test-page settings in query applied; invalid or empty ones are skipped."""
+    changes = {}
+    for key, allowed in OVERRIDE_CHOICES.items():
+        if query.get(key) in allowed:
+            changes[key] = query[key]
+    for key, (cast, low, high) in OVERRIDE_RANGES.items():
+        try:
+            value = cast(query[key])
+        except (KeyError, ValueError):
+            continue
+        if low <= value <= high:
+            changes[key] = value
+    if query.get('elevenlabs_auto_mode') in ('0', '1'):
+        changes['elevenlabs_auto_mode'] = query['elevenlabs_auto_mode'] == '1'
+    if 'openai_chat_model' in changes:
+        # Same rule as load_config: only the default model takes the default reasoning effort.
+        changes['openai_reasoning_effort'] = CHAT_REASONING_EFFORT if changes['openai_chat_model'] == CHAT_MODEL else None
+    return replace(config, **changes), changes
 
 
 def build_system_prompt(document_text, owner_name='chủ máy', language='vi'):
@@ -99,6 +136,7 @@ def load_config(env=None, read_system_doc=_read_system_doc, read_pricing=_read_p
         openai_api_key=env['OPENAI_API_KEY'],
         openai_realtime_model=env.get('OPENAI_REALTIME_MODEL') or 'gpt-realtime-2.1',
         openai_transcribe_model=env.get('OPENAI_TRANSCRIBE_MODEL') or 'gpt-4o-transcribe',
+        stt_provider=env.get('STT_PROVIDER') or 'openai',
         # The model that talks to the caller. The llm rates in config/pricing.json must match it.
         openai_chat_model=chat_model,
         # The default effort goes with the default model only: a model picked by hand may

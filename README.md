@@ -122,6 +122,17 @@ needs more than knobs: transcription and the LLM's first token cost about 0.6 s
 each. The knobs are off by default because each trades something (cutting in on
 pauses, choppier speech, a weaker model) that should be judged by ear.
 
+## Trying settings
+
+`/call.html` has a "Cài đặt thử" panel: speech-to-text service (OpenAI or ElevenLabs
+Scribe), silence before a turn ends, VAD threshold, chat model, TTS model and auto
+mode. They apply to that one call and are remembered in the browser; blank means the
+server's default. Each reply shows its wait split into stt / llm / tts. `scripts/probe.py
+... --query 'stt_provider=elevenlabs'` does the same from the command line, and
+`scripts/stt_bench.py` compares the two speech-to-text services on synthesized Vietnamese.
+First numbers: end of speech to final transcript, median over 5 sentences — OpenAI
+1.2 s, Scribe 0.77 s; judge accuracy by ear on your own line.
+
 ## Tests and checks
 
 `.venv/bin/python -m pytest` — logic, client wrappers, and the server wired to

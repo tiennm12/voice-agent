@@ -4,9 +4,14 @@
     <meta charset="utf-8" />
     <title>Gọi thử — Voice Agent</title>
     <style>
-      body { font-family: sans-serif; max-width: 480px; margin: 40px auto; }
+      body { font-family: sans-serif; max-width: 560px; margin: 40px auto; }
       #status { font-weight: bold; }
       #transcript { margin-top: 16px; border-top: 1px solid #ccc; padding-top: 8px; }
+      fieldset { margin: 12px 0; }
+      label { display: block; margin: 6px 0; }
+      label small { color: #666; }
+      select, input { margin-left: 6px; }
+      input[type=number] { width: 80px; }
       button { font-size: 16px; padding: 8px 16px; margin-right: 8px; }
     </style>
   </head>
@@ -18,6 +23,73 @@
       Mic: <span id="mode"></span>
       (<a id="modeLink"></a>; nếu tiếng bị rè, giật hoặc nhận dạng sai nhiều thì thử đổi)
     </p>
+    <details id="settings" open>
+      <summary>Cài đặt thử (chỉ áp dụng cho cuộc gọi này)</summary>
+      <fieldset>
+        <legend>Nhận dạng giọng</legend>
+        <label>
+          Dịch vụ
+          <select name="stt_provider">
+            <option value="">mặc định của máy chủ</option>
+            <option value="openai">OpenAI (gpt-4o-transcribe)</option>
+            <option value="elevenlabs">ElevenLabs Scribe v2 Realtime</option>
+          </select>
+        </label>
+        <label>
+          Model OpenAI
+          <select name="openai_transcribe_model">
+            <option value="">mặc định</option>
+            <option>gpt-4o-transcribe</option>
+            <option>gpt-4o-mini-transcribe</option>
+          </select>
+        </label>
+        <label>
+          Im lặng bao lâu thì chốt câu (ms)
+          <input type="number" name="vad_silence_ms" min="100" max="3000" step="50" placeholder="mặc định" />
+          <small>nhỏ = trả lời sớm nhưng dễ cắt ngang khi người gọi ngắt quãng</small>
+        </label>
+        <label>
+          Ngưỡng nhận tiếng nói (0–1)
+          <input type="number" name="vad_threshold" min="0" max="1" step="0.05" placeholder="mặc định" />
+          <small>cao = bỏ qua nhiễu tốt hơn; thang của OpenAI và Scribe có thể khác nhau</small>
+        </label>
+        <label>
+          Bỏ câu nghe không chắc, log-prob dưới
+          <input type="number" name="stt_min_logprob" min="-5" max="0" step="0.1" placeholder="tắt" />
+          <small>chỉ OpenAI; ví dụ -1</small>
+        </label>
+      </fieldset>
+      <fieldset>
+        <legend>Trả lời</legend>
+        <label>
+          Model chat
+          <select name="openai_chat_model">
+            <option value="">mặc định</option>
+            <option>gpt-6-luna</option>
+            <option>gpt-4.1-mini</option>
+            <option>gpt-4o-mini</option>
+            <option>gpt-4.1-nano</option>
+          </select>
+          <small>chi phí ghi trong hộp thư vẫn tính theo giá model mặc định</small>
+        </label>
+        <label>
+          Model giọng đọc
+          <select name="elevenlabs_model_id">
+            <option value="">mặc định</option>
+            <option>eleven_flash_v2_5</option>
+            <option>eleven_turbo_v2_5</option>
+          </select>
+        </label>
+        <label>
+          Auto mode giọng đọc
+          <select name="elevenlabs_auto_mode">
+            <option value="">mặc định</option>
+            <option value="1">bật (đọc ngay từng cụm)</option>
+            <option value="0">tắt</option>
+          </select>
+        </label>
+      </fieldset>
+    </details>
     <p>Trạng thái: <span id="status">idle</span></p>
     <button id="startButton">Bắt đầu gọi</button>
     <button id="endButton">Kết thúc</button>
@@ -28,6 +100,32 @@
       const link = document.getElementById('modeLink');
       link.textContent = raw ? 'dùng xử lý của Chrome' : 'thử mic thô';
       link.href = raw ? 'call.html' : 'call.html?raw=1';
+    </script>
+    <script>
+      // Remembered between visits; localStorage can be unavailable (private window), so every access is guarded.
+      const fields = document.querySelectorAll('#settings [name]');
+      const KEY = 'callSettings';
+      function saved() {
+        try { return JSON.parse(localStorage.getItem(KEY)) || {}; } catch { return {}; }
+      }
+      const previous = saved();
+      fields.forEach((field) => {
+        field.value = previous[field.name] ?? '';
+        field.addEventListener('change', () => {
+          try { localStorage.setItem(KEY, JSON.stringify(currentOptions())); } catch { /* not remembered */ }
+        });
+      });
+      function currentOptions() {
+        const options = {};
+        fields.forEach((field) => { if (field.value !== '') options[field.name] = field.value; });
+        return options;
+      }
+      // client.js reads window.callOptions when the call starts; the capture listener runs before its own click handler.
+      document.getElementById('startButton').addEventListener('click', () => {
+        window.callOptions = currentOptions();
+        const chosen = Object.entries(window.callOptions).map(([k, v]) => `${k}=${v}`).join(', ');
+        appendTranscript('cài đặt', chosen || 'mặc định');
+      }, true);
     </script>
     <script src="client.js"></script>
   </body>
