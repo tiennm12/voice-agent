@@ -12,6 +12,10 @@ ROOT = Path(__file__).resolve().parent.parent
 # spoken text and hangs up once that reply has been played.
 HANGUP_MARKER = '[HANGUP]'
 
+# A transcript the model is this unsure of (mean token log-probability) is noise, not speech.
+# Not calibrated against many real calls yet: the server logs every score as "[stt] confidence=".
+DEFAULT_STT_MIN_LOGPROB = -1.0
+
 
 @dataclass(frozen=True)
 class Config:
@@ -22,6 +26,7 @@ class Config:
     openai_reasoning_effort: str | None
     vad_silence_ms: int | None
     vad_threshold: float | None
+    stt_min_logprob: float | None
     elevenlabs_api_key: str
     elevenlabs_voice_id: str
     elevenlabs_model_id: str
@@ -107,6 +112,7 @@ def load_config(env=None, read_system_doc=_read_system_doc, read_pricing=_read_p
         # Turn-detection tuning; unset leaves the OpenAI defaults (500ms of silence, threshold 0.5).
         vad_silence_ms=int(env['VAD_SILENCE_MS']) if env.get('VAD_SILENCE_MS') else None,
         vad_threshold=float(env['VAD_THRESHOLD']) if env.get('VAD_THRESHOLD') else None,
+        stt_min_logprob=float(env.get('STT_MIN_LOGPROB') or DEFAULT_STT_MIN_LOGPROB),
         elevenlabs_api_key=env['ELEVENLABS_API_KEY'],
         elevenlabs_voice_id=env['ELEVENLABS_VOICE_ID'],
         elevenlabs_model_id=env.get('ELEVENLABS_MODEL_ID') or 'eleven_flash_v2_5',

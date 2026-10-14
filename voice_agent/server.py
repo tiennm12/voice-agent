@@ -111,6 +111,7 @@ def create_app(config, *, ws_connect=None, openai_client=None, http=None):
             language=None if settings['language'] == 'auto' else settings['language'],
             vad_silence_ms=config.vad_silence_ms,
             vad_threshold=config.vad_threshold,
+            min_logprob=config.stt_min_logprob,
         )
         stt.on('usage', record.add_stt_usage)
         # The bridge page asks for 'pcm'; anything unrecognized gets the mic page's MP3.

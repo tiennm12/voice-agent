@@ -17,7 +17,10 @@ SUMMARY_PROMPT = (
     '"caller_name" (tên người gọi, hoặc "Không rõ" nếu họ không nói), '
     '"summary" (1-2 câu tiếng Việt tóm tắt lời nhắn), '
     '"urgency" (một trong: "thấp", "trung bình", "cao"), '
-    '"category" ("spam" nếu là telesales, quảng cáo, lừa đảo hoặc cuộc gọi tự động; còn lại là "bình thường").'
+    '"category" ("spam" nếu là telesales, quảng cáo, lừa đảo hoặc cuộc gọi tự động; còn lại là "bình thường"). '
+    'Transcript do máy nhận dạng giọng nói tạo ra nên có thể chứa nhiễu: các câu rời rạc, vô nghĩa hoặc không liên quan '
+    'nhau là tiếng ồn, không phải lời người gọi. Khi đó summary nói rõ là không nghe rõ lời nhắn, urgency là "thấp", '
+    'và không suy diễn. Chỉ chọn urgency "cao" khi người gọi nói rõ ràng việc khẩn cấp.'
 )
 NORMAL, SPAM = 'bình thường', 'spam'
 NO_MESSAGE = {

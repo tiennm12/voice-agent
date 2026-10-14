@@ -175,6 +175,56 @@ async def test_without_a_language_the_transcription_is_left_to_detect_it():
     assert ws.sent[0]['session']['audio']['input']['transcription'] == {'model': 'gpt-4o-transcribe'}
 
 
+async def test_asks_the_api_for_transcription_logprobs():
+    ws = FakeWs()
+    client, _ = make_client(ws)
+
+    await client.connect()
+
+    assert ws.sent[0]['session']['include'] == ['item.input_audio_transcription.logprobs']
+
+
+async def test_a_transcript_the_model_is_unsure_of_is_dropped_but_a_confident_one_is_kept():
+    ws = FakeWs()
+    ws_connect, _ = fake_ws_connect(ws)
+    client = RealtimeSttClient(
+        api_key='sk-test', model='gpt-realtime-2.1', transcribe_model='gpt-4o-transcribe', ws_connect=ws_connect,
+        min_logprob=-1.0,
+    )
+    await client.connect()
+    transcripts = []
+    client.on('transcript_final', transcripts.append)
+
+    def completed(text, *logprobs):
+        return {
+            'type': 'conversation.item.input_audio_transcription.completed', 'transcript': text,
+            'logprobs': [{'token': 'x', 'logprob': lp} for lp in logprobs],
+        }
+
+    ws.feed(completed('Giọt lệ', -2.5, -1.5, -0.8))  # mean -1.6: noise
+    ws.feed(completed('Xin chào', -0.1, -0.3))  # mean -0.2: speech
+    ws.feed({'type': 'conversation.item.input_audio_transcription.completed', 'transcript': 'Không có điểm'})
+    await tick()
+
+    assert transcripts == [None, 'Xin chào', 'Không có điểm']
+
+
+async def test_without_a_threshold_every_transcript_is_kept():
+    ws = FakeWs()
+    client, _ = make_client(ws)
+    await client.connect()
+    transcripts = []
+    client.on('transcript_final', transcripts.append)
+
+    ws.feed({
+        'type': 'conversation.item.input_audio_transcription.completed', 'transcript': 'Giọt lệ',
+        'logprobs': [{'token': 'x', 'logprob': -5.0}],
+    })
+    await tick()
+
+    assert transcripts == ['Giọt lệ']
+
+
 async def test_turn_detection_can_be_tuned_and_is_left_to_the_api_defaults_otherwise():
     default_ws, tuned_ws = FakeWs(), FakeWs()
     ws_connect, _ = fake_ws_connect(default_ws, tuned_ws)
