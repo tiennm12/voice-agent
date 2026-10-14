@@ -26,14 +26,20 @@ async function startCall({ inputStream, meta, audio, player: callPlayer, onEnded
     audioContext = new AudioContext({ sampleRate: 24000 });
     await audioContext.audioWorklet.addModule('pcm-encoder-processor.js');
 
+    // /call.html?raw=1 turns Chrome's own echo/noise/gain processing off, to compare on a bad mic.
+    const processing = !new URLSearchParams(location.search).has('raw');
     micStream = inputStream || await navigator.mediaDevices.getUserMedia({
       audio: {
         channelCount: 1,
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true,
+        echoCancellation: processing,
+        noiseSuppression: processing,
+        autoGainControl: processing,
       },
     });
+    if (!inputStream) {
+      const [track] = micStream.getAudioTracks();
+      appendTranscript('mic', `${track.label} (${processing ? 'xử lý của Chrome' : 'thô, không xử lý'})`);
+    }
     const source = audioContext.createMediaStreamSource(micStream);
     const encoderNode = new AudioWorkletNode(audioContext, 'pcm-encoder-processor');
     source.connect(encoderNode);

@@ -14,10 +14,21 @@
     <p><a href="/">← Hộp thư</a></p>
     <h1>Gọi thử</h1>
     <p>Nói chuyện với trợ lý qua micro của máy này, như một người gọi đến.</p>
+    <p>
+      Mic: <span id="mode"></span>
+      (<a id="modeLink"></a>; nếu tiếng bị rè, giật hoặc nhận dạng sai nhiều thì thử đổi)
+    </p>
     <p>Trạng thái: <span id="status">idle</span></p>
     <button id="startButton">Bắt đầu gọi</button>
     <button id="endButton">Kết thúc</button>
     <div id="transcript"></div>
+    <script>
+      const raw = new URLSearchParams(location.search).has('raw');
+      document.getElementById('mode').textContent = raw ? 'thô (không xử lý)' : 'xử lý của Chrome (mặc định)';
+      const link = document.getElementById('modeLink');
+      link.textContent = raw ? 'dùng xử lý của Chrome' : 'thử mic thô';
+      link.href = raw ? 'call.html' : 'call.html?raw=1';
+    </script>
     <script src="client.js"></script>
   </body>
 </html>
