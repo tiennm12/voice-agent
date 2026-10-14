@@ -149,8 +149,8 @@ def test_load_config_latency_knobs_are_off_unless_set():
     assert (config.vad_silence_ms, config.vad_threshold) == (300, 0.7)
 
 
-def test_load_config_unsure_transcripts_are_dropped_by_default_and_the_threshold_can_move():
-    assert load_config(env=REQUIRED_ENV, read_system_doc=lambda: 'doc').stt_min_logprob == -1.0
+def test_load_config_unsure_transcripts_are_only_dropped_when_a_threshold_is_set():
+    assert load_config(env=REQUIRED_ENV, read_system_doc=lambda: 'doc').stt_min_logprob is None
 
     config = load_config(env={**REQUIRED_ENV, 'STT_MIN_LOGPROB': '-0.6'}, read_system_doc=lambda: 'doc')
     assert config.stt_min_logprob == -0.6
