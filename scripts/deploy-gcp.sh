@@ -4,6 +4,7 @@
 set -e
 
 REPO_URL="https://github.com/tiennm12/voice-agent.git"
+BRANCH="${BRANCH:-python-port}"
 APP_DIR="$HOME/voice-agent"
 
 echo "== Installing Python (needs 3.11+) =="
@@ -27,9 +28,11 @@ caddy version
 
 echo "== Fetching code =="
 if [ -d "$APP_DIR" ]; then
-  git -C "$APP_DIR" pull
+  git -C "$APP_DIR" fetch origin "$BRANCH"
+  git -C "$APP_DIR" checkout "$BRANCH"
+  git -C "$APP_DIR" pull origin "$BRANCH"
 else
-  git clone "$REPO_URL" "$APP_DIR"
+  git clone --branch "$BRANCH" "$REPO_URL" "$APP_DIR"
 fi
 cd "$APP_DIR"
 python3 -m venv .venv
