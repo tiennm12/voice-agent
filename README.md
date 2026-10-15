@@ -117,6 +117,26 @@ took 4.4 s. Hence `reasoning_effort=none`, which is applied automatically with
 the default model. Another model is one line in `.env` (`OPENAI_CHAT_MODEL`)
 plus its two prices in `config/pricing.json`.
 
+## Realtime pipeline (speech-to-speech)
+
+`PIPELINE=realtime` (or `?pipeline=realtime` on `/call.html`, which has a drop-down for it) runs
+one OpenAI Realtime session per call: the caller's audio goes in and the agent's voice comes out of the
+same socket, with OpenAI voices instead of ElevenLabs. Same method as above, median of 5-6 calls,
+`scripts/bench.py`:
+
+| Setup | Median |
+|---|---|
+| classic, gpt-4.1-mini | 2.4-2.7 s |
+| realtime gpt-realtime-2.1 (1 call) | 1.8 s |
+| realtime gpt-realtime-2.1-mini, server_vad | 1.26 s |
+| ... + `agent_reasoning=minimal` | 1.32 s (no gain) |
+| ... + `vad_silence_ms=300` | 1.18 s (one 2.4 s outlier) |
+| ... + `vad_type=semantic_vad` | 1.4-1.5 s, more spread (3.3 s outlier) |
+| ... + semantic_vad, eagerness high | 1.5 s, more spread |
+
+semantic_vad did not help on a synthesized caller. The cost of a realtime call is priced from
+`pricing.json` -> `realtime` (per model) into the call's cost; the hangup is the `end_call` tool.
+
 The fixed greeting starts in 0.3-0.4 s. Getting replies under a second
 needs more than knobs: transcription and the LLM's first token cost about 0.6 s
 each. The knobs are off by default because each trades something (cutting in on

@@ -3,11 +3,12 @@
 Usage: python scripts/bench.py PORT RUNS 'label=query' ['label=query' ...]
 Each run is one real call (--until-reply); needs ELEVENLABS_* in .env for the caller voice.
 """
+import os
 import statistics
 import subprocess
 import sys
 
-SAY = 'Xin chào, cho mình gửi lời nhắn cho anh Tiến, mình tên là Lan, nhờ anh gọi lại số không chín không một.'
+SAY = os.environ.get('BENCH_SAY') or 'Xin chào, cho mình gửi lời nhắn cho anh Tiến, mình tên là Lan, nhờ anh gọi lại cho mình khi rảnh nhé.'
 port, runs, *variants = sys.argv[1:]
 for variant in variants:
     label, _, query = variant.partition('=')
