@@ -26,6 +26,59 @@
     <details id="settings" open>
       <summary>Cài đặt thử (chỉ áp dụng cho cuộc gọi này)</summary>
       <fieldset>
+        <legend>Kiểu xử lý</legend>
+        <label>
+          Pipeline
+          <select name="pipeline">
+            <option value="">mặc định của máy chủ</option>
+            <option value="classic">classic: nhận dạng → chat model → ElevenLabs</option>
+            <option value="realtime">realtime: một model nghe và nói (giọng OpenAI)</option>
+          </select>
+        </label>
+        <label>
+          Model realtime
+          <select name="agent_model">
+            <option value="">mặc định</option>
+            <option>gpt-realtime-2.1-mini</option>
+            <option>gpt-realtime-2.1</option>
+            <option>gpt-realtime-mini</option>
+          </select>
+          <small>chỉ pipeline realtime; chỉ hai model đầu có giá trong pricing.json</small>
+        </label>
+        <label>
+          Giọng realtime
+          <select name="agent_voice">
+            <option value="">mặc định (marin)</option>
+            <option>marin</option>
+            <option>cedar</option>
+            <option>alloy</option>
+            <option>ash</option>
+            <option>coral</option>
+            <option>sage</option>
+            <option>shimmer</option>
+            <option>verse</option>
+          </select>
+        </label>
+        <label>
+          Cách chốt câu (chỉ khi dùng OpenAI)
+          <select name="vad_type">
+            <option value="">mặc định (server_vad)</option>
+            <option value="server_vad">server_vad: theo thời gian im lặng</option>
+            <option value="semantic_vad">semantic_vad: theo nội dung câu nói</option>
+          </select>
+        </label>
+        <label>
+          Semantic VAD vội đến mức nào
+          <select name="vad_eagerness">
+            <option value="">mặc định</option>
+            <option>low</option>
+            <option>medium</option>
+            <option>high</option>
+          </select>
+          <small>high = trả lời sớm hơn; ô im lặng và ngưỡng bên dưới không áp dụng cho semantic_vad</small>
+        </label>
+      </fieldset>
+      <fieldset>
         <legend>Nhận dạng giọng</legend>
         <label>
           Dịch vụ
@@ -127,6 +180,7 @@
         appendTranscript('cài đặt', chosen || 'mặc định');
       }, true);
     </script>
+    <script src="pcm-player.js"></script>
     <script src="client.js"></script>
   </body>
 </html>

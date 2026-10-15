@@ -42,6 +42,13 @@ class Config:
     utc_offset_hours: float
     public_base_url: str | None
     urgent_reminder_minutes: float
+    # 'classic' = STT -> chat model -> ElevenLabs TTS; 'realtime' = one speech-to-speech session.
+    pipeline: str = 'classic'
+    vad_type: str = 'server_vad'  # or 'semantic_vad', which ignores vad_silence_ms / vad_threshold
+    vad_eagerness: str | None = None  # semantic_vad only: low / medium / high
+    agent_model: str = 'gpt-realtime-2.1'  # the speech-to-speech model, pipeline=realtime
+    agent_voice: str = 'marin'
+    agent_reasoning: str | None = None  # pipeline=realtime; None = the model's own default
 
     @property
     def tz(self):
@@ -55,6 +62,12 @@ OVERRIDE_CHOICES = {
     'openai_transcribe_model': {'gpt-4o-transcribe', 'gpt-4o-mini-transcribe'},
     'openai_chat_model': {'gpt-6-luna', 'gpt-4.1-mini', 'gpt-4o-mini', 'gpt-4.1-nano'},
     'elevenlabs_model_id': {'eleven_flash_v2_5', 'eleven_turbo_v2_5'},
+    'pipeline': {'classic', 'realtime'},
+    'vad_type': {'server_vad', 'semantic_vad'},
+    'vad_eagerness': {'low', 'medium', 'high'},
+    'agent_model': {'gpt-realtime-2.1', 'gpt-realtime-2.1-mini', 'gpt-realtime-mini', 'gpt-realtime-2', 'gpt-realtime'},
+    'agent_reasoning': {'none', 'minimal', 'low', 'medium'},
+    'agent_voice': {'marin', 'cedar', 'alloy', 'ash', 'ballad', 'coral', 'echo', 'sage', 'shimmer', 'verse'},
 }
 OVERRIDE_RANGES = {
     'vad_silence_ms': (int, 100, 3000),
@@ -84,7 +97,7 @@ def with_overrides(config, query):
     return replace(config, **changes), changes
 
 
-def build_system_prompt(document_text, owner_name='chủ máy', language='vi'):
+def build_system_prompt(document_text, owner_name='chủ máy', language='vi', hangup_by_tool=False):
     """language 'vi' pins replies to Vietnamese; 'auto' follows whatever the caller speaks."""
     vietnamese_only = language == 'vi'
     lines = [
@@ -95,9 +108,13 @@ def build_system_prompt(document_text, owner_name='chủ máy', language='vi'):
         document_text.strip().replace('{{OWNER_NAME}}', owner_name),
         '---',
         # Kept here rather than in the editable document: hanging up depends on it.
-        f'Khi cuộc trò chuyện đã xong (bạn đã ghi nhận lời nhắn và chào tạm biệt, hoặc người gọi chào tạm biệt), '
-        f'hãy kết thúc câu trả lời cuối cùng đó bằng đúng chuỗi {HANGUP_MARKER} để hệ thống cúp máy. '
-        f'Không dùng {HANGUP_MARKER} hay dấu ngoặc vuông ở bất kỳ lúc nào khác.',
+        'Khi cuộc trò chuyện đã xong (bạn đã ghi nhận lời nhắn và chào tạm biệt, hoặc người gọi chào tạm biệt), '
+        + (
+            'hãy nói lời chào tạm biệt rồi gọi hàm end_call để hệ thống cúp máy. Không gọi end_call vào lúc nào khác.'
+            if hangup_by_tool else
+            f'hãy kết thúc câu trả lời cuối cùng đó bằng đúng chuỗi {HANGUP_MARKER} để hệ thống cúp máy. '
+            f'Không dùng {HANGUP_MARKER} hay dấu ngoặc vuông ở bất kỳ lúc nào khác.'
+        ),
     ]
     if not vietnamese_only:
         # Stated last and bluntly: against a Vietnamese document and a Vietnamese greeting,
@@ -173,4 +190,10 @@ def load_config(env=None, read_system_doc=_read_system_doc, read_pricing=_read_p
         # enables the "listen" button under Telegram notifications.
         public_base_url=(env.get('PUBLIC_BASE_URL') or '').rstrip('/') or None,
         urgent_reminder_minutes=float(env.get('URGENT_REMINDER_MINUTES') or 5),
+        pipeline=env.get('PIPELINE') or 'classic',
+        vad_type=env.get('VAD_TYPE') or 'server_vad',
+        vad_eagerness=env.get('VAD_EAGERNESS') or None,
+        agent_model=env.get('OPENAI_AGENT_MODEL') or 'gpt-realtime-2.1',
+        agent_voice=env.get('OPENAI_AGENT_VOICE') or 'marin',
+        agent_reasoning=env.get('OPENAI_AGENT_REASONING') or None,
     )

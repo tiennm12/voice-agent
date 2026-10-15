@@ -7,12 +7,14 @@ Usage (from the repo root): python scripts/probe.py PORT STAY_SECONDS [options]
   --no-login    skip logging in, to check that the server refuses the call
   --query QS    settings for this call as a query string, e.g. 'stt_provider=elevenlabs&vad_silence_ms=300'
   --until-reply hang up as soon as the reply to --say starts (for latency runs)
+  --save WAV    write the agent's audio to this file (needs audio=pcm in --query), to listen to it
 Prints "reply latency": from the caller's last word to the first audio of the answer.
 Reads DASHBOARD_PASSWORD and the ElevenLabs settings from the environment or ./.env.
 Streams silence the rest of the time, like an open mic. Exits when the server closes
 the socket, or after STAY_SECONDS.
 """
 import argparse
+import wave
 import asyncio
 import hashlib
 import json
@@ -37,6 +39,7 @@ parser.add_argument('--barge-delay', type=float, default=1.5)
 parser.add_argument('--no-login', action='store_true')
 parser.add_argument('--query', default='')
 parser.add_argument('--until-reply', action='store_true')
+parser.add_argument('--save')
 args = parser.parse_args()
 
 FRAME = 960  # 480 samples PCM16 = 20ms @ 24kHz
@@ -113,6 +116,7 @@ async def main():
 
         mic_task = asyncio.create_task(mic())
         audio_bytes = 0
+        heard = bytearray()
         audio_since_state = 0
         listening_count = 0
         speaking_count = 0
@@ -123,6 +127,7 @@ async def main():
                         if audio_since_state == 0:
                             print(f'PROBE {ms()}ms first audio chunk of this turn')
                         audio_bytes += len(msg.data)
+                        heard += msg.data
                         audio_since_state += len(msg.data)
                         if said['ended_at'] and not said['answered']:
                             said['answered'] = True
@@ -151,6 +156,12 @@ async def main():
         finally:
             mic_task.cancel()
             await ws.close()
+        if args.save and heard:
+            with wave.open(args.save, 'wb') as out:
+                out.setnchannels(1)
+                out.setsampwidth(2)
+                out.setframerate(24000)
+                out.writeframes(bytes(heard))
         print(f'PROBE total audio_bytes={audio_bytes} (~{audio_bytes / 16000:.1f}s of mp3)')
 
 

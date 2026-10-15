@@ -43,6 +43,8 @@ def compute_cost(usage, pricing):
             + usage['stt_output_tokens'] * stt['output_per_1m_tokens']
         ) / 1e6 + usage['stt_seconds'] / 60 * stt['per_minute'],
         'tts_usd': usage['tts_characters'] / 1000 * tts['per_1k_characters'],
+        # Speech-to-speech calls: already priced when each response finished (see add_realtime_usage).
+        'realtime_usd': usage.get('realtime_usd', 0),
     }
     total = sum(costs.values())
     cost = {name: round(value, 6) for name, value in costs.items()} | {'total_usd': round(total, 6)}
@@ -122,6 +124,20 @@ class CallRecord:
         self.usage['stt_text_tokens'] += text_tokens
         self.usage['stt_audio_tokens'] += usage.get('input_tokens', 0) - text_tokens
         self.usage['stt_output_tokens'] += usage.get('output_tokens', 0)
+
+    def add_realtime_usage(self, usage, rates):
+        """One speech-to-speech response's usage, priced at once with `rates` (the model's row of pricing['realtime'])."""
+        inp, out = usage.get('input_token_details') or {}, usage.get('output_token_details') or {}
+        cached = inp.get('cached_tokens_details') or {}
+        cached_text, cached_audio = cached.get('text_tokens', 0), cached.get('audio_tokens', 0)
+        self.usage['realtime_usd'] += (
+            (inp.get('text_tokens', 0) - cached_text) * rates['text_input']
+            + cached_text * rates['cached_text_input']
+            + (inp.get('audio_tokens', 0) - cached_audio) * rates['audio_input']
+            + cached_audio * rates['cached_audio_input']
+            + out.get('text_tokens', 0) * rates['text_output']
+            + out.get('audio_tokens', 0) * rates['audio_output']
+        ) / 1e6
 
     def close(self):
         """Ends the record and saves it. Synchronous on purpose: runs even when the call is torn down by cancellation."""

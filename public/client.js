@@ -24,6 +24,11 @@ async function startCall({ inputStream, meta, audio, player: callPlayer, onEnded
     player = callPlayer || mp3Player;
     onCallEnded = onEnded || null;
     audioContext = new AudioContext({ sampleRate: 24000 });
+    // The realtime pipeline speaks raw PCM, which the MP3 player can't play.
+    if (!callPlayer && window.callOptions?.pipeline === 'realtime') {
+      audio = 'pcm';
+      player = createCallPlayer(audioContext, audioContext.destination);
+    }
     await audioContext.audioWorklet.addModule('pcm-encoder-processor.js');
 
     // /call.html?raw=1 turns Chrome's own echo/noise/gain processing off, to compare on a bad mic.
@@ -165,7 +170,8 @@ function handleServerMessage(event) {
     if (msg.type === 'state') setStatus(msg.state);
     if (msg.type === 'error') appendTranscript('error', msg.message);
     if (msg.type === 'latency') {
-      appendTranscript('latency', `chờ ${msg.response_ms}ms (stt ${msg.stt_ms} · llm ${msg.llm_ms} · tts ${msg.tts_ms})`);
+      const split = msg.stt_ms === undefined ? '' : ` (stt ${msg.stt_ms} · llm ${msg.llm_ms} · tts ${msg.tts_ms})`;
+      appendTranscript('latency', `chờ ${msg.response_ms}ms${split}`);
     }
     if (msg.type === 'interrupt') player.stop();
     return;

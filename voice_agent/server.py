@@ -18,7 +18,8 @@ from .config import build_system_prompt, load_config, with_overrides
 from .elevenlabs_stt_client import ElevenLabsSttClient
 from .db import Database
 from .llm_client import stream_completion
-from .realtime_stt_client import RealtimeSttClient
+from .realtime_agent import RealtimeAgent
+from .realtime_stt_client import RealtimeSttClient, turn_detection
 from .session_orchestrator import SessionOrchestrator
 from .settings import effective_settings, pick_greeting
 from .telegram import TelegramNotifier
@@ -107,57 +108,93 @@ def create_app(config, *, ws_connect=None, openai_client=None, http=None):
         # The test page (call.html) may change the pipeline for this one call.
         cfg, overrides = with_overrides(config, request.query)
         language = None if settings['language'] == 'auto' else settings['language']
-        if cfg.stt_provider == 'elevenlabs':
-            stt = ElevenLabsSttClient(
-                api_key=cfg.elevenlabs_api_key,
+        tts = None
+        if cfg.pipeline == 'realtime':
+            rates = config.pricing.get('realtime', {}).get(cfg.agent_model)
+            if not rates:
+                log.warning('[%s] [server] no pricing.json realtime rates for %s: this call is not costed', session_id, cfg.agent_model)
+
+            def on_usage(kind, usage):
+                if kind == 'stt':
+                    record.add_stt_usage(usage)
+                elif rates:
+                    record.add_realtime_usage(usage, rates)
+
+            orchestrator = RealtimeAgent(
+                api_key=cfg.openai_api_key,
+                model=cfg.agent_model,
+                instructions=build_system_prompt(
+                    settings['system_doc'], settings['owner_name'], settings['language'], hangup_by_tool=True,
+                ),
+                voice=cfg.agent_voice,
+                reasoning_effort=cfg.agent_reasoning,
                 ws_connect=upstream['ws_connect'],
+                send_control=send_control,
+                send_audio=outbox.put_nowait,
                 language=language,
-                vad_silence_ms=cfg.vad_silence_ms,
-                vad_threshold=cfg.vad_threshold,
+                turn_detection=turn_detection(cfg.vad_type, cfg.vad_silence_ms, cfg.vad_threshold, cfg.vad_eagerness),
+                transcribe_model=cfg.openai_transcribe_model,
+                greeting=pick_greeting(settings, record.started_at),
+                on_hangup=lambda: outbox.put_nowait(None),
+                silence_timeout=config.silence_timeout,
+                max_call=config.max_call,
+                session_id=session_id,
+                on_usage=on_usage,
             )
         else:
-            stt = RealtimeSttClient(
-                api_key=cfg.openai_api_key,
-                model=cfg.openai_realtime_model,
-                transcribe_model=cfg.openai_transcribe_model,
+            if cfg.stt_provider == 'elevenlabs':
+                stt = ElevenLabsSttClient(
+                    api_key=cfg.elevenlabs_api_key,
+                    ws_connect=upstream['ws_connect'],
+                    language=language,
+                    vad_silence_ms=cfg.vad_silence_ms,
+                    vad_threshold=cfg.vad_threshold,
+                )
+            else:
+                stt = RealtimeSttClient(
+                    api_key=cfg.openai_api_key,
+                    model=cfg.openai_realtime_model,
+                    transcribe_model=cfg.openai_transcribe_model,
+                    ws_connect=upstream['ws_connect'],
+                    language=language,
+                    vad_silence_ms=cfg.vad_silence_ms,
+                    vad_threshold=cfg.vad_threshold,
+                    min_logprob=cfg.stt_min_logprob,
+                    vad_type=cfg.vad_type,
+                    vad_eagerness=cfg.vad_eagerness,
+                )
+            stt.on('usage', record.add_stt_usage)
+            # The bridge page asks for 'pcm'; anything unrecognized gets the mic page's MP3.
+            audio = request.query.get('audio')
+            if audio not in AUDIO_FORMATS:
+                audio = 'mp3'
+            tts = TtsClient(
+                api_key=config.elevenlabs_api_key,
+                voice_id=settings['voice_id'],
+                model_id=cfg.elevenlabs_model_id,
                 ws_connect=upstream['ws_connect'],
-                language=language,
-                vad_silence_ms=cfg.vad_silence_ms,
-                vad_threshold=cfg.vad_threshold,
-                min_logprob=cfg.stt_min_logprob,
+                audio=audio,
+                auto_mode=cfg.elevenlabs_auto_mode,
             )
-        stt.on('usage', record.add_stt_usage)
-        # The bridge page asks for 'pcm'; anything unrecognized gets the mic page's MP3.
-        audio = request.query.get('audio')
-        if audio not in AUDIO_FORMATS:
-            audio = 'mp3'
-        tts = TtsClient(
-            api_key=config.elevenlabs_api_key,
-            voice_id=settings['voice_id'],
-            model_id=cfg.elevenlabs_model_id,
-            ws_connect=upstream['ws_connect'],
-            audio=audio,
-            auto_mode=cfg.elevenlabs_auto_mode,
-        )
-        orchestrator = SessionOrchestrator(
-            system_prompt=build_system_prompt(settings['system_doc'], settings['owner_name'], settings['language']),
-            stt_client=stt,
-            llm_stream=partial(
-                stream_completion,
-                upstream['openai'],
-                model=cfg.openai_chat_model,
-                reasoning_effort=cfg.openai_reasoning_effort,
-                on_usage=record.add_llm_usage,
-            ),
-            tts_client=tts,
-            session_id=session_id,
-            greeting=pick_greeting(settings, record.started_at),
-            send_control=send_control,
-            send_audio=outbox.put_nowait,
-            on_hangup=lambda: outbox.put_nowait(None),
-            silence_timeout=config.silence_timeout,
-            max_call=config.max_call,
-        )
+            orchestrator = SessionOrchestrator(
+                system_prompt=build_system_prompt(settings['system_doc'], settings['owner_name'], settings['language']),
+                stt_client=stt,
+                llm_stream=partial(
+                    stream_completion,
+                    upstream['openai'],
+                    model=cfg.openai_chat_model,
+                    reasoning_effort=cfg.openai_reasoning_effort,
+                    on_usage=record.add_llm_usage,
+                ),
+                tts_client=tts,
+                session_id=session_id,
+                greeting=pick_greeting(settings, record.started_at),
+                send_control=send_control,
+                send_audio=outbox.put_nowait,
+                on_hangup=lambda: outbox.put_nowait(None),
+                silence_timeout=config.silence_timeout,
+                max_call=config.max_call,
+            )
 
         log.info('[%s] [server] new call connected%s', session_id, f' with overrides {overrides}' if overrides else '')
         sender = asyncio.create_task(send_outbox())
@@ -181,7 +218,8 @@ def create_app(config, *, ws_connect=None, openai_client=None, http=None):
             log.info('[%s] [server] call ended', session_id)
             orchestrator.stop()
             sender.cancel()
-            record.usage['tts_characters'] = tts.characters_sent
+            if tts:
+                record.usage['tts_characters'] = tts.characters_sent
             record.close()  # the call is on disk before anything below can fail
 
         await browser_ws.close()
