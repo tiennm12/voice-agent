@@ -17,7 +17,7 @@ async function api(path, { method = 'GET', body, form } = {}) {
     body: body === undefined ? form : JSON.stringify(body),
   });
   if (response.status === 401) {
-    location.href = '/login'; // the session expired
+    location.href = 'login'; // the session expired
     throw new Error('Phiên đăng nhập đã hết.');
   }
   if (!response.ok) throw new Error((await response.text()) || response.statusText);
@@ -52,7 +52,7 @@ async function loadCalls({ append = false } = {}) {
   if (filter) params.set('filter', filter);
   if (append && calls.length) params.set('before', calls[calls.length - 1].started_at);
   try {
-    const page = (await api(`/api/calls?${params}`)).calls;
+    const page = (await api(`api/calls?${params}`)).calls;
     calls = append ? calls.concat(page) : page;
     renderCallList();
     document.getElementById('moreCalls').hidden = page.length < PAGE_SIZE;
@@ -93,8 +93,8 @@ async function openCall(id) {
   renderCallList();
   const detail = document.getElementById('callDetail');
   try {
-    const call = await api(`/api/calls/${id}`);
-    const view = renderCall(detail, call, `/api/calls/${id}/audio`);
+    const call = await api(`api/calls/${id}`);
+    const view = renderCall(detail, call, `api/calls/${id}/audio`);
     const actions = element('div', 'actions');
     const unread = element('button', '', 'Đánh dấu chưa đọc');
     unread.addEventListener('click', () => setRead(id, false));
@@ -112,8 +112,8 @@ function blockButton(caller) {
   button.addEventListener('click', async () => {
     button.disabled = true;
     try {
-      const settings = await api('/api/settings');
-      await api('/api/settings', { method: 'PUT', body: { blocked_numbers: [...settings.blocked_numbers, caller] } });
+      const settings = await api('api/settings');
+      await api('api/settings', { method: 'PUT', body: { blocked_numbers: [...settings.blocked_numbers, caller] } });
       button.textContent = 'Đã chặn';
     } catch (err) {
       button.textContent = `Không chặn được: ${err.message}`;
@@ -124,7 +124,7 @@ function blockButton(caller) {
 }
 
 async function setRead(id, read) {
-  await api(`/api/calls/${id}/read`, { method: 'POST', body: { read } });
+  await api(`api/calls/${id}/read`, { method: 'POST', body: { read } });
   const call = calls.find((candidate) => candidate.id === id);
   if (call) call.read = read;
   renderCallList();
@@ -146,7 +146,7 @@ document.getElementById('moreCalls').addEventListener('click', () => loadCalls({
 async function loadStats() {
   const by = document.getElementById('statsBy').value;
   try {
-    const { rows } = await api(`/api/stats?by=${by}`);
+    const { rows } = await api(`api/stats?by=${by}`);
     const busiest = Math.max(1, ...rows.map((row) => row.total));
     document.getElementById('statsRows').replaceChildren(...rows.map((row) => {
       const line = element('tr');
@@ -233,7 +233,7 @@ function showVoicePreview() {
 
 async function loadVoices() {
   const select = document.getElementById('settingsForm').elements.voice_id;
-  const { voices, current } = await api('/api/voices');
+  const { voices, current } = await api('api/voices');
   select.replaceChildren(...voices.map((voice) => {
     const labels = Object.values(voice.labels).join(', ');
     const option = new Option(labels ? `${voice.name} (${labels})` : voice.name, voice.voice_id);
@@ -245,7 +245,7 @@ async function loadVoices() {
 
 async function loadSettings() {
   try {
-    fillSettings(await api('/api/settings'));
+    fillSettings(await api('api/settings'));
     setStatus('settingsStatus', '');
   } catch (err) {
     setStatus('settingsStatus', `Không tải được cài đặt: ${err.message}`, true);
@@ -260,7 +260,7 @@ async function loadSettings() {
 
 async function saveSettings(values, done) {
   try {
-    fillSettings(await api('/api/settings', { method: 'PUT', body: values }));
+    fillSettings(await api('api/settings', { method: 'PUT', body: values }));
     setStatus('settingsStatus', done);
   } catch (err) {
     setStatus('settingsStatus', `Không lưu được: ${err.message}`, true);
@@ -284,7 +284,7 @@ document.getElementById('cloneForm').addEventListener('submit', async (event) =>
   const form = event.currentTarget;
   setStatus('cloneStatus', 'Đang tạo giọng, có thể mất một phút…');
   try {
-    await api('/api/voices/clone', { method: 'POST', form: new FormData(form) });
+    await api('api/voices/clone', { method: 'POST', form: new FormData(form) });
     form.reset();
     await loadVoices();
     setStatus('cloneStatus', 'Đã tạo và chọn giọng mới. Áp dụng từ cuộc gọi kế tiếp.');

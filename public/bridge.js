@@ -64,7 +64,7 @@ async function login(event) {
 // better to answer a spammer than to turn a real caller away.
 async function isBlocked(caller) {
   try {
-    const response = await fetch('/api/blocked', {
+    const response = await fetch('api/blocked', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ caller }),

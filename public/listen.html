@@ -3,16 +3,17 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <base href="../" />
     <!-- The address carries the access token: never send it on as a Referer. -->
     <meta name="referrer" content="no-referrer" />
     <title>Cuộc gọi nhỡ — Voice Agent</title>
-    <link rel="stylesheet" href="/app.css" />
+    <link rel="stylesheet" href="app.css" />
   </head>
   <body>
     <main>
       <div id="call"><p class="muted">Đang tải…</p></div>
     </main>
-    <script src="/call-view.js"></script>
+    <script src="call-view.js"></script>
     <script>
       // One call, opened from the link under a Telegram notification: /c/<id>?t=<token>.
       // The token rides along on every request; with a dashboard session it isn't needed.
@@ -21,12 +22,12 @@
       const access = token ? `?t=${encodeURIComponent(token)}` : '';
       const container = document.getElementById('call');
 
-      fetch(`/api/calls/${callId}${access}`)
+      fetch(`api/calls/${callId}${access}`)
         .then((response) => (response.ok ? response.json() : Promise.reject(response.status)))
         .then((call) => {
-          renderCall(container, call, `/api/calls/${callId}/audio${access}`);
+          renderCall(container, call, `api/calls/${callId}/audio${access}`);
           // Opening the link is reading the call: it stops the urgent reminders.
-          return fetch(`/api/calls/${callId}/read${access}`, {
+          return fetch(`api/calls/${callId}/read${access}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ read: true }),

@@ -1,4 +1,5 @@
 import asyncio
+import os
 import contextlib
 import json
 import logging
@@ -250,7 +251,7 @@ def main():
     logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
     config = load_config()
     # No access log: call links carry their token in the query string.
-    web.run_app(create_app(config), port=config.port, access_log=None)
+    web.run_app(create_app(config), host=os.environ.get('HOST'), port=config.port, access_log=None)
 
 
 if __name__ == '__main__':

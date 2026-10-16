@@ -60,7 +60,7 @@ async function startCall({ inputStream, meta, audio, player: callPlayer, onEnded
     // The test page (call.html) sets window.callOptions: pipeline settings for this call only.
     const query = new URLSearchParams(window.callOptions || {});
     if (audio) query.set('audio', audio);
-    const callSocket = new WebSocket(`${wsProtocol}//${location.host}/ws${query.size ? `?${query}` : ''}`);
+    const callSocket = new WebSocket(`${wsProtocol}//${location.host}${location.pathname.replace(/[^/]*$/, "")}ws${query.size ? `?${query}` : ''}`);
     callSocket.binaryType = 'arraybuffer';
     socket = callSocket;
     // A socket the page has moved on from (call ended, maybe a new one started) can
