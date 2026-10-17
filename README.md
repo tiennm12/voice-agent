@@ -118,7 +118,7 @@ took 4.4 s. Hence `reasoning_effort=none`, which is applied automatically with
 the default model. Another model is one line in `.env` (`OPENAI_CHAT_MODEL`)
 plus its two prices in `config/pricing.json`.
 
-## Realtime and hybrid pipelines
+## Realtime, hybrid and live pipelines
 
 `PIPELINE=realtime` (or `?pipeline=realtime` on `/call.html`, which has a drop-down for it) runs
 one OpenAI Realtime session per call: the caller's audio goes in and the agent's voice comes out of the
@@ -129,7 +129,15 @@ ElevenLabs speaks: the model hears the audio itself, so no separate transcriptio
 and the call keeps the owner's ElevenLabs voice (and a cloned one). Its latency line splits
 `llm_ms` (caller stopped -> first word of text) and `tts_ms` (first word -> first audio).
 
-All three, 2026-10-17, same sentence, median of 5 calls each (`scripts/bench.py`):
+`PIPELINE=live` runs one GPT-Live session (`gpt-live-1`, OpenAI voices, `OPENAI_LIVE_VOICE`): a
+full-duplex model that listens while it speaks, chooses when to answer and when to yield, and says
+"dạ" while the caller talks. It greets first, word for word. It has no tool to end the call, so a
+small model is asked after each of its words whether that was a goodbye (a Decisions trigger);
+a confident yes hangs up once the goodbye has played. It costs $0.05 per minute of call (~1,300đ),
+several times the other pipelines. Barge-in is the model's call: in tests it yielded about 1.6 s
+after the caller cut in.
+
+All, 2026-10-17, same sentence, median of 5 calls each (`scripts/bench.py`):
 
 | Pipeline | Median | Runs |
 |---|---|---|
@@ -137,6 +145,10 @@ All three, 2026-10-17, same sentence, median of 5 calls each (`scripts/bench.py`
 | hybrid, gpt-realtime-2.1-mini | 1.47 s | 1.34-1.66 s |
 | realtime, gpt-realtime-2.1-mini | 1.28 s | 1.22-1.36 s |
 | hybrid + `elevenlabs_auto_mode=1` | 1.34 s | 1.16-2.20 s (one outlier) |
+| live, gpt-live-1 | 0.72 s | 0.32-0.92 s |
+
+For live the first audio can be a short "dạ" before the answer itself: the model talks when it
+judges the caller done, sometimes before a silence-based VAD would.
 
 Earlier realtime measurements, same method, median of 5-6 calls:
 
@@ -160,14 +172,19 @@ pauses, choppier speech, a weaker model) that should be judged by ear.
 
 ## Trying settings
 
-`/call.html` has a "Cài đặt thử" panel: speech-to-text service (OpenAI or ElevenLabs
-Scribe), silence before a turn ends, VAD threshold, chat model, TTS model and auto
+`/call.html` has a "Cài đặt thử" panel: pipeline, speech-to-text service (OpenAI, ElevenLabs
+Scribe or Soniox), silence before a turn ends, VAD threshold, chat model, TTS model and auto
 mode. They apply to that one call and are remembered in the browser; blank means the
 server's default. Each reply shows its wait split into stt / llm / tts. `scripts/probe.py
 ... --query 'stt_provider=elevenlabs'` does the same from the command line, and
 `scripts/stt_bench.py` compares the two speech-to-text services on synthesized Vietnamese.
 First numbers: end of speech to final transcript, median over 5 sentences — OpenAI
 1.2 s, Scribe 0.77 s; judge accuracy by ear on your own line.
+
+Soniox (`stt_provider=soniox`, needs `SONIOX_API_KEY`) decides that the caller has finished
+from the words and the intonation rather than a fixed silence, so it can answer sooner without
+cutting in on a pause. "Soniox chốt câu sớm" (0-3) trades the two; the silence box becomes its
+longest wait (500-3000 ms). Not measured yet.
 
 ## Deploy behind nginx
 
