@@ -199,3 +199,13 @@ def test_the_live_pipeline_and_its_voice_can_be_picked_per_call():
     assert changes == {'pipeline': 'live', 'live_voice': 'quartz'}
     _, changes = with_overrides(config, {'live_voice': 'not-a-voice'})
     assert changes == {}
+
+
+def test_soniox_and_its_endpoint_level_can_be_picked_per_call():
+    config = load_config(env={**REQUIRED_ENV, 'SONIOX_API_KEY': 'sx'}, read_system_doc=lambda: 'doc')
+    assert config.soniox_api_key == 'sx'
+
+    _, changes = with_overrides(config, {'stt_provider': 'soniox', 'soniox_endpoint_level': '3'})
+    assert changes == {'stt_provider': 'soniox', 'soniox_endpoint_level': 3}
+    _, changes = with_overrides(config, {'soniox_endpoint_level': '4'})
+    assert changes == {}

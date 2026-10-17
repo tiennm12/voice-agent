@@ -109,7 +109,13 @@
             <option value="">mặc định của máy chủ</option>
             <option value="openai">OpenAI (gpt-4o-transcribe)</option>
             <option value="elevenlabs">ElevenLabs Scribe v2 Realtime</option>
+            <option value="soniox">Soniox v5 (chốt câu theo ngữ nghĩa)</option>
           </select>
+        </label>
+        <label>
+          Soniox chốt câu sớm (0–3)
+          <input type="number" name="soniox_endpoint_level" min="0" max="3" step="1" placeholder="mặc định" />
+          <small>chỉ Soniox; cao = trả lời sớm hơn nhưng dễ cắt ngang. Ô im lặng bên dưới = thời gian chờ tối đa (500–3000)</small>
         </label>
         <label>
           Model OpenAI

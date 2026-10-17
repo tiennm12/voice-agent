@@ -25,11 +25,15 @@ class FakeWs:
 
     def __init__(self):
         self.sent = []
+        self.sent_bytes = []
         self.closed = False
         self._incoming = asyncio.Queue()
 
     async def send_str(self, data):
         self.sent.append(json.loads(data))
+
+    async def send_bytes(self, data):
+        self.sent_bytes.append(data)
 
     async def close(self):
         self.closed = True

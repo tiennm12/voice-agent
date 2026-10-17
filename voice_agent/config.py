@@ -53,6 +53,8 @@ class Config:
     agent_reasoning: str | None = None  # pipeline=realtime; None = the model's own default
     live_model: str = 'gpt-live-1'  # pipeline=live
     live_voice: str = 'marin'
+    soniox_api_key: str | None = None  # stt_provider=soniox
+    soniox_endpoint_level: int | None = None  # 0-3: higher ends the caller's turn sooner; None = Soniox's default
 
     @property
     def tz(self):
@@ -62,7 +64,7 @@ class Config:
 # What the test page (call.html) may change for one call, as query parameters of /ws:
 # name -> allowed values, or name -> (type, min, max). Anything else is ignored.
 OVERRIDE_CHOICES = {
-    'stt_provider': {'openai', 'elevenlabs'},
+    'stt_provider': {'openai', 'elevenlabs', 'soniox'},
     'openai_transcribe_model': {'gpt-4o-transcribe', 'gpt-4o-mini-transcribe'},
     'openai_chat_model': {'gpt-6-luna', 'gpt-4.1-mini', 'gpt-4o-mini', 'gpt-4.1-nano'},
     'elevenlabs_model_id': {'eleven_flash_v2_5', 'eleven_turbo_v2_5'},
@@ -82,6 +84,7 @@ OVERRIDE_RANGES = {
     'vad_silence_ms': (int, 100, 3000),
     'vad_threshold': (float, 0.0, 1.0),
     'stt_min_logprob': (float, -5.0, 0.0),
+    'soniox_endpoint_level': (int, 0, 3),
 }
 
 
@@ -206,4 +209,5 @@ def load_config(env=None, read_system_doc=_read_system_doc, read_pricing=_read_p
         agent_reasoning=env.get('OPENAI_AGENT_REASONING') or None,
         live_model=env.get('OPENAI_LIVE_MODEL') or 'gpt-live-1',
         live_voice=env.get('OPENAI_LIVE_VOICE') or 'marin',
+        soniox_api_key=env.get('SONIOX_API_KEY') or None,
     )

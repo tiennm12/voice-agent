@@ -25,6 +25,7 @@ from .realtime_agent import HybridAgent, RealtimeAgent
 from .realtime_stt_client import RealtimeSttClient, turn_detection
 from .session_orchestrator import SessionOrchestrator
 from .settings import effective_settings, pick_greeting
+from .soniox_stt_client import SonioxSttClient
 from .telegram import TelegramNotifier
 from .tts_client import AUDIO_FORMATS, TtsClient
 
@@ -247,7 +248,15 @@ def build_agent(cfg, settings, record, upstream, session_id, audio, *, send_cont
         tts = make_tts()
         return HybridAgent(tts_client=tts, **realtime), tts
 
-    if cfg.stt_provider == 'elevenlabs':
+    if cfg.stt_provider == 'soniox':
+        stt = SonioxSttClient(
+            api_key=cfg.soniox_api_key,
+            ws_connect=upstream['ws_connect'],
+            language=language,
+            vad_silence_ms=cfg.vad_silence_ms,
+            endpoint_level=cfg.soniox_endpoint_level,
+        )
+    elif cfg.stt_provider == 'elevenlabs':
         stt = ElevenLabsSttClient(
             api_key=cfg.elevenlabs_api_key,
             ws_connect=upstream['ws_connect'],

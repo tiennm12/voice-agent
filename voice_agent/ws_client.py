@@ -54,6 +54,15 @@ class JsonWsClient:
         except ConnectionError:
             pass  # the reader reports the drop as 'disconnected'
 
+    async def _send_bytes(self, data):
+        ws = self._ws
+        if ws is None or ws.closed:
+            return
+        try:
+            await ws.send_bytes(data)
+        except ConnectionError:
+            pass  # the reader reports the drop as 'disconnected'
+
     async def _read(self, ws):
         async for msg in ws:
             if ws is not self._ws:

@@ -329,6 +329,19 @@ async def test_the_live_pipeline_runs_one_gpt_live_session_and_prices_it_by_the_
         await client.close()
 
 
+async def test_soniox_stt_can_be_picked_per_call(tmp_path):
+    client, upstream = await start_app(tmp_path, SONIOX_API_KEY='sx-key')
+    try:
+        ws = await client.ws_connect('/ws?stt_provider=soniox&soniox_endpoint_level=2')
+        await upstream.tts_socket(1)  # the greeting; FakeUpstream files every non-OpenAI socket under tts
+        assert upstream.tts_urls[0] == 'wss://stt-rt.soniox.com/transcribe-websocket'
+        assert upstream.tts[0].sent[0]['endpoint_latency_adjustment_level'] == 2
+        assert upstream.stt.sent == [], 'OpenAI transcription is not used'
+        await ws.close()
+    finally:
+        await client.close()
+
+
 async def test_calls_past_the_retention_period_are_purged_when_the_server_starts(tmp_path):
     # First run records a call; RETENTION_DAYS=0 on the next start makes every finished call "old".
     client, upstream = await start_app(tmp_path)
