@@ -19,6 +19,7 @@ from .call_record import CallRecord, purge_old_calls, summarize_saved_call
 from .config import build_system_prompt, load_config, with_overrides
 from .elevenlabs_stt_client import ElevenLabsSttClient
 from .db import Database
+from .live_agent import LiveAgent
 from .llm_client import stream_completion
 from .realtime_agent import HybridAgent, RealtimeAgent
 from .realtime_stt_client import RealtimeSttClient, turn_detection
@@ -183,6 +184,7 @@ def build_agent(cfg, settings, record, upstream, session_id, audio, *, send_cont
 
     classic: STT -> chat model -> ElevenLabs. realtime: one speech-to-speech session (OpenAI voices).
     hybrid: a Realtime session hears the caller and answers in text, spoken by ElevenLabs.
+    live: a full-duplex GPT-Live session (OpenAI voices).
     """
     language = None if settings['language'] == 'auto' else settings['language']
     greeting = pick_greeting(settings, record.started_at)
@@ -196,6 +198,23 @@ def build_agent(cfg, settings, record, upstream, session_id, audio, *, send_cont
             api_key=cfg.elevenlabs_api_key, voice_id=settings['voice_id'], model_id=cfg.elevenlabs_model_id,
             ws_connect=upstream['ws_connect'], audio=audio, auto_mode=cfg.elevenlabs_auto_mode,
         )
+
+    if cfg.pipeline == 'live':
+        rate = cfg.pricing.get('live', {}).get(cfg.live_model, {}).get('per_minute')
+        if rate is None:
+            log.warning('[%s] [server] no pricing.json live rate for %s: this call is not costed', session_id, cfg.live_model)
+        return LiveAgent(
+            api_key=cfg.openai_api_key,
+            model=cfg.live_model,
+            instructions=build_system_prompt(
+                settings['system_doc'], settings['owner_name'], settings['language'], hangup='goodbye',
+            ),
+            voice=cfg.live_voice,
+            ws_connect=upstream['ws_connect'],
+            session_id=session_id,
+            on_usage=lambda seconds: record.set_live_usage(seconds, rate),
+            **common,
+        ), None
 
     if cfg.pipeline in ('realtime', 'hybrid'):
         rates = cfg.pricing.get('realtime', {}).get(cfg.agent_model)
@@ -212,7 +231,7 @@ def build_agent(cfg, settings, record, upstream, session_id, audio, *, send_cont
             api_key=cfg.openai_api_key,
             model=cfg.agent_model,
             instructions=build_system_prompt(
-                settings['system_doc'], settings['owner_name'], settings['language'], hangup_by_tool=True,
+                settings['system_doc'], settings['owner_name'], settings['language'], hangup='tool',
             ),
             reasoning_effort=cfg.agent_reasoning,
             ws_connect=upstream['ws_connect'],

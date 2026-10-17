@@ -34,7 +34,29 @@
             <option value="classic">classic: nhận dạng → chat model → ElevenLabs</option>
             <option value="realtime">realtime: một model nghe và nói (giọng OpenAI)</option>
             <option value="hybrid">hybrid: model realtime nghe, trả lời bằng chữ → ElevenLabs đọc</option>
+            <option value="live">live: GPT-Live, vừa nghe vừa nói (giọng OpenAI)</option>
           </select>
+        </label>
+        <label>
+          Giọng live
+          <select name="live_voice">
+            <option value="">mặc định (marin)</option>
+            <option>marin</option>
+            <option>cedar</option>
+            <option>quartz</option>
+            <option>ripple</option>
+            <option>vesper</option>
+            <option>willow</option>
+            <option>stone</option>
+            <option>gleam</option>
+            <option>meridian</option>
+            <option>bossa</option>
+            <option>tempo</option>
+            <option>beacon</option>
+            <option>delta</option>
+            <option>cinder</option>
+          </select>
+          <small>chỉ pipeline live</small>
         </label>
         <label>
           Model realtime

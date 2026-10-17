@@ -43,13 +43,16 @@ class Config:
     public_base_url: str | None
     urgent_reminder_minutes: float
     # 'classic' = STT -> chat model -> ElevenLabs TTS; 'realtime' = one speech-to-speech session;
-    # 'hybrid' = a Realtime session hears the caller and answers in text, spoken by ElevenLabs.
+    # 'hybrid' = a Realtime session hears the caller and answers in text, spoken by ElevenLabs;
+    # 'live' = a GPT-Live session: full-duplex, listens while it speaks.
     pipeline: str = 'classic'
     vad_type: str = 'server_vad'  # or 'semantic_vad', which ignores vad_silence_ms / vad_threshold
     vad_eagerness: str | None = None  # semantic_vad only: low / medium / high
     agent_model: str = 'gpt-realtime-2.1'  # the Realtime model of pipeline=realtime and pipeline=hybrid
     agent_voice: str = 'marin'
     agent_reasoning: str | None = None  # pipeline=realtime; None = the model's own default
+    live_model: str = 'gpt-live-1'  # pipeline=live
+    live_voice: str = 'marin'
 
     @property
     def tz(self):
@@ -63,12 +66,17 @@ OVERRIDE_CHOICES = {
     'openai_transcribe_model': {'gpt-4o-transcribe', 'gpt-4o-mini-transcribe'},
     'openai_chat_model': {'gpt-6-luna', 'gpt-4.1-mini', 'gpt-4o-mini', 'gpt-4.1-nano'},
     'elevenlabs_model_id': {'eleven_flash_v2_5', 'eleven_turbo_v2_5'},
-    'pipeline': {'classic', 'realtime', 'hybrid'},
+    'pipeline': {'classic', 'realtime', 'hybrid', 'live'},
     'vad_type': {'server_vad', 'semantic_vad'},
     'vad_eagerness': {'low', 'medium', 'high'},
     'agent_model': {'gpt-realtime-2.1', 'gpt-realtime-2.1-mini', 'gpt-realtime-mini', 'gpt-realtime-2', 'gpt-realtime'},
     'agent_reasoning': {'none', 'minimal', 'low', 'medium'},
     'agent_voice': {'marin', 'cedar', 'alloy', 'ash', 'ballad', 'coral', 'echo', 'sage', 'shimmer', 'verse'},
+    # Each one checked against a real gpt-live-1 session.start on 2026-10-17.
+    'live_voice': {
+        'marin', 'cedar', 'quartz', 'ripple', 'vesper', 'willow', 'stone', 'gleam', 'meridian', 'bossa', 'tempo',
+        'beacon', 'delta', 'cinder',
+    },
 }
 OVERRIDE_RANGES = {
     'vad_silence_ms': (int, 100, 3000),
@@ -98,8 +106,20 @@ def with_overrides(config, query):
     return replace(config, **changes), changes
 
 
-def build_system_prompt(document_text, owner_name='chủ máy', language='vi', hangup_by_tool=False):
-    """language 'vi' pins replies to Vietnamese; 'auto' follows whatever the caller speaks."""
+HANGUP_RULES = {
+    # classic: the chat model marks its last reply.
+    'marker': f'hãy kết thúc câu trả lời cuối cùng đó bằng đúng chuỗi {HANGUP_MARKER} để hệ thống cúp máy. '
+              f'Không dùng {HANGUP_MARKER} hay dấu ngoặc vuông ở bất kỳ lúc nào khác.',
+    # realtime / hybrid: the model calls the end_call tool.
+    'tool': 'hãy nói lời chào tạm biệt rồi gọi hàm end_call để hệ thống cúp máy. Không gọi end_call vào lúc nào khác. '
+            'Đừng nói ra là bạn sắp cúp máy hay kết thúc cuộc gọi.',
+    # live: no tools; a goodbye is detected from what the agent says.
+    'goodbye': 'hãy nói một lời chào tạm biệt ngắn, hệ thống sẽ tự cúp máy. Đừng nói ra là bạn sắp cúp máy.',
+}
+
+
+def build_system_prompt(document_text, owner_name='chủ máy', language='vi', hangup='marker'):
+    """language 'vi' pins replies to Vietnamese; 'auto' follows whatever the caller speaks. hangup: a key of HANGUP_RULES."""
     vietnamese_only = language == 'vi'
     lines = [
         f"Bạn là trợ lý gọi điện thoại, {'trả lời bằng tiếng Việt, ' if vietnamese_only else 'trả lời '}"
@@ -110,12 +130,7 @@ def build_system_prompt(document_text, owner_name='chủ máy', language='vi', h
         '---',
         # Kept here rather than in the editable document: hanging up depends on it.
         'Khi cuộc trò chuyện đã xong (bạn đã ghi nhận lời nhắn và chào tạm biệt, hoặc người gọi chào tạm biệt), '
-        + (
-            'hãy nói lời chào tạm biệt rồi gọi hàm end_call để hệ thống cúp máy. Không gọi end_call vào lúc nào khác.'
-            if hangup_by_tool else
-            f'hãy kết thúc câu trả lời cuối cùng đó bằng đúng chuỗi {HANGUP_MARKER} để hệ thống cúp máy. '
-            f'Không dùng {HANGUP_MARKER} hay dấu ngoặc vuông ở bất kỳ lúc nào khác.'
-        ),
+        + HANGUP_RULES[hangup],
     ]
     if not vietnamese_only:
         # Stated last and bluntly: against a Vietnamese document and a Vietnamese greeting,
@@ -189,4 +204,6 @@ def load_config(env=None, read_system_doc=_read_system_doc, read_pricing=_read_p
         agent_model=env.get('OPENAI_AGENT_MODEL') or 'gpt-realtime-2.1',
         agent_voice=env.get('OPENAI_AGENT_VOICE') or 'marin',
         agent_reasoning=env.get('OPENAI_AGENT_REASONING') or None,
+        live_model=env.get('OPENAI_LIVE_MODEL') or 'gpt-live-1',
+        live_voice=env.get('OPENAI_LIVE_VOICE') or 'marin',
     )

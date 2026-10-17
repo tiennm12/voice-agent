@@ -40,6 +40,13 @@ def test_build_system_prompt_fills_in_the_owner_name_and_appends_the_hangup_rule
     assert HANGUP_MARKER in prompt
 
 
+def test_each_pipeline_gets_the_hangup_rule_it_can_act_on():
+    assert 'end_call' in build_system_prompt('doc', hangup='tool')
+    goodbye = build_system_prompt('doc', hangup='goodbye')  # live: no tools, no marker
+    assert 'end_call' not in goodbye and HANGUP_MARKER not in goodbye
+    assert 'tự cúp máy' in goodbye
+
+
 def test_load_config_keeps_the_owner_name_and_the_raw_system_document_as_defaults():
     config = load_config(env={**REQUIRED_ENV, 'OWNER_NAME': 'anh Tuấn'}, read_system_doc=lambda: 'Của {{OWNER_NAME}}')
     assert config.owner_name == 'anh Tuấn'
@@ -182,3 +189,13 @@ def test_with_overrides_applies_valid_test_page_settings_and_ignores_the_rest():
     }
     assert cfg.elevenlabs_api_key == config.elevenlabs_api_key
     assert config.stt_provider == 'openai'  # the shared config is not touched
+
+
+def test_the_live_pipeline_and_its_voice_can_be_picked_per_call():
+    config = load_config(env=REQUIRED_ENV, read_system_doc=lambda: 'doc')
+    assert (config.live_model, config.live_voice) == ('gpt-live-1', 'marin')
+
+    _, changes = with_overrides(config, {'pipeline': 'live', 'live_voice': 'quartz'})
+    assert changes == {'pipeline': 'live', 'live_voice': 'quartz'}
+    _, changes = with_overrides(config, {'live_voice': 'not-a-voice'})
+    assert changes == {}

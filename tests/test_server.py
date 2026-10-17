@@ -308,6 +308,27 @@ async def test_the_hybrid_pipeline_listens_with_realtime_and_speaks_with_elevenl
         await client.close()
 
 
+async def test_the_live_pipeline_runs_one_gpt_live_session_and_prices_it_by_the_minute(tmp_path):
+    client, upstream = await start_app(tmp_path)
+    try:
+        ws = await client.ws_connect('/ws?pipeline=live&live_voice=quartz')
+        async with asyncio.timeout(2):
+            while not upstream.stt.sent:
+                await asyncio.sleep(0.005)
+        start = upstream.stt.sent[0]  # the one OpenAI socket is the Live session
+        assert start['type'] == 'session.start'
+        assert start['session']['audio']['output']['voice'] == 'quartz'
+        assert 'hệ thống sẽ tự cúp máy' in start['session']['instructions']
+        assert upstream.tts == [], 'no ElevenLabs'
+        await ws.close()
+
+        call = await saved_call(client, lambda call: call['summary'])
+        assert 'live_seconds' in call['usage']
+        assert call['cost']['realtime_usd'] == pytest.approx(call['usage']['live_seconds'] / 60 * 0.05, abs=1e-4)
+    finally:
+        await client.close()
+
+
 async def test_calls_past_the_retention_period_are_purged_when_the_server_starts(tmp_path):
     # First run records a call; RETENTION_DAYS=0 on the next start makes every finished call "old".
     client, upstream = await start_app(tmp_path)

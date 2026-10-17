@@ -24,8 +24,8 @@ async function startCall({ inputStream, meta, audio, player: callPlayer, onEnded
     player = callPlayer || mp3Player;
     onCallEnded = onEnded || null;
     audioContext = new AudioContext({ sampleRate: 24000 });
-    // The realtime pipeline speaks raw PCM, which the MP3 player can't play.
-    if (!callPlayer && window.callOptions?.pipeline === 'realtime') {
+    // The realtime and live pipelines speak raw PCM, which the MP3 player can't play.
+    if (!callPlayer && ['realtime', 'live'].includes(window.callOptions?.pipeline)) {
       audio = 'pcm';
       player = createCallPlayer(audioContext, audioContext.destination);
     }

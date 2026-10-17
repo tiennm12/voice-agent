@@ -1,5 +1,5 @@
 {
-  "_note": "USD. Giá tham khảo ngày 2026-10-13 từ developers.openai.com/api/docs/pricing và elevenlabs.io/pricing/api — sửa theo gói đang dùng. llm = gpt-6-luna (hội thoại + tóm tắt); đổi OPENAI_CHAT_MODEL thì sửa hai giá llm theo (gpt-4.1-mini: 0.40 / 1.60, gpt-4o-mini: 0.15 / 0.60). stt = gpt-4o-transcribe; audio_input suy ra từ mức ước tính $0.006/phút của OpenAI. tts = ElevenLabs Flash. realtime = pipeline speech-to-speech (USD / 1M tokens, theo model; developers.openai.com/api/docs/pricing 2026-10-15), thay cho llm + tts của cuộc gọi đó; stt vẫn tính riêng cho phần phiên âm chạy kèm. usd_to_vnd = tỷ giá tham khảo, đặt null để bỏ dòng VND.",
+  "_note": "USD. Giá tham khảo ngày 2026-10-13 từ developers.openai.com/api/docs/pricing và elevenlabs.io/pricing/api — sửa theo gói đang dùng. llm = gpt-6-luna (hội thoại + tóm tắt); đổi OPENAI_CHAT_MODEL thì sửa hai giá llm theo (gpt-4.1-mini: 0.40 / 1.60, gpt-4o-mini: 0.15 / 0.60). stt = gpt-4o-transcribe; audio_input suy ra từ mức ước tính $0.006/phút của OpenAI. tts = ElevenLabs Flash. realtime = pipeline speech-to-speech (USD / 1M tokens, theo model; developers.openai.com/api/docs/pricing 2026-10-15), thay cho llm + tts của cuộc gọi đó; stt vẫn tính riêng cho phần phiên âm chạy kèm. live = pipeline GPT-Live, USD mỗi phút phiên tính theo giây (developers.openai.com/api/docs/models/gpt-live-1, 2026-10-17). usd_to_vnd = tỷ giá tham khảo, đặt null để bỏ dòng VND.",
   "llm": {
     "input_per_1m_tokens": 0.10,
     "output_per_1m_tokens": 0.50
@@ -22,6 +22,9 @@
       "text_input": 0.60, "cached_text_input": 0.06, "text_output": 2.40,
       "audio_input": 10.00, "cached_audio_input": 0.30, "audio_output": 20.00
     }
+  },
+  "live": {
+    "gpt-live-1": {"per_minute": 0.05}
   },
   "usd_to_vnd": 26400
 }

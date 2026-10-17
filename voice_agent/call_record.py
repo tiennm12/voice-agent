@@ -202,6 +202,12 @@ class CallRecord:
             + out.get('audio_tokens', 0) * rates['audio_output']
         ) / 1e6
 
+    def set_live_usage(self, seconds, per_minute):
+        """A GPT-Live session, billed per second of session. Set, not added: it is reported once, as the call ends."""
+        self.usage['live_seconds'] = round(seconds, 1)
+        if per_minute is not None:
+            self.usage['realtime_usd'] = seconds / 60 * per_minute
+
     def close(self):
         """Ends the record and saves it. Synchronous on purpose: runs even when the call is torn down by cancellation."""
         self.ended_at = datetime.now(self._tz)
