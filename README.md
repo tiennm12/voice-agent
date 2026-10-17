@@ -6,7 +6,8 @@ notifies the owner on Telegram and files it in a web dashboard. Product
 requirements: `docs/PRD.md`.
 
 Caller audio -> Python backend -> OpenAI Realtime API (speech-to-text + VAD) ->
-gpt-6-luna with reasoning off (streaming) -> ElevenLabs (streaming TTS) -> caller. The caller is
+gpt-6-luna with reasoning off (streaming) -> ElevenLabs (streaming TTS) -> caller. That is the
+default `classic` pipeline; `hybrid` and `realtime` (below) answer faster. The caller is
 either a browser microphone (`/call.html`) or a real phone call bridged from an
 eTelecom extension (`/bridge.html`).
 
@@ -117,12 +118,27 @@ took 4.4 s. Hence `reasoning_effort=none`, which is applied automatically with
 the default model. Another model is one line in `.env` (`OPENAI_CHAT_MODEL`)
 plus its two prices in `config/pricing.json`.
 
-## Realtime pipeline (speech-to-speech)
+## Realtime and hybrid pipelines
 
 `PIPELINE=realtime` (or `?pipeline=realtime` on `/call.html`, which has a drop-down for it) runs
 one OpenAI Realtime session per call: the caller's audio goes in and the agent's voice comes out of the
-same socket, with OpenAI voices instead of ElevenLabs. Same method as above, median of 5-6 calls,
-`scripts/bench.py`:
+same socket, with OpenAI voices instead of ElevenLabs.
+
+`PIPELINE=hybrid` keeps the Realtime session for listening but has it answer in text, which
+ElevenLabs speaks: the model hears the audio itself, so no separate transcription sits in the wait,
+and the call keeps the owner's ElevenLabs voice (and a cloned one). Its latency line splits
+`llm_ms` (caller stopped -> first word of text) and `tts_ms` (first word -> first audio).
+
+All three, 2026-10-17, same sentence, median of 5 calls each (`scripts/bench.py`):
+
+| Pipeline | Median | Runs |
+|---|---|---|
+| classic (gpt-6-luna) | 2.72 s | 2.57-2.83 s |
+| hybrid, gpt-realtime-2.1-mini | 1.47 s | 1.34-1.66 s |
+| realtime, gpt-realtime-2.1-mini | 1.28 s | 1.22-1.36 s |
+| hybrid + `elevenlabs_auto_mode=1` | 1.34 s | 1.16-2.20 s (one outlier) |
+
+Earlier realtime measurements, same method, median of 5-6 calls:
 
 | Setup | Median |
 |---|---|
@@ -152,6 +168,29 @@ server's default. Each reply shows its wait split into stt / llm / tts. `scripts
 `scripts/stt_bench.py` compares the two speech-to-text services on synthesized Vietnamese.
 First numbers: end of speech to final transcript, median over 5 sentences — OpenAI
 1.2 s, Scribe 0.77 s; judge accuracy by ear on your own line.
+
+## Deploy behind nginx
+
+The prod server serves the app under a path prefix, `https://chatbot2.vietnamobile.ai/voiceagent/`;
+the frontend only uses page-relative URLs, so any prefix works. `deploy/` holds that server's
+systemd unit and nginx location. The prod `.env` adds:
+
+- `HOST=127.0.0.1`: only nginx can reach the app.
+- `DATA_DIR=/var/lib/voiceagent`: the database, recordings and `secret.key` live outside the
+  code, so a redeploy never touches them.
+- `PUBLIC_BASE_URL=https://chatbot2.vietnamobile.ai/voiceagent`: for the Telegram "listen" button.
+
+Redeploy (from the repo root; never ships `.env` or `data/`):
+
+    tar --exclude=.venv --exclude=.git --exclude=data --exclude=.env --exclude=__pycache__ \
+        --exclude=.pytest_cache --exclude=.superpowers --exclude=.code-review-graph --exclude=.claude \
+        -czf ../voiceagent.tgz .
+    scp ../voiceagent.tgz dev2@SERVER:/tmp/
+    ssh dev2@SERVER 'cd /home/dev/tiennm/voiceagent && tar xzf /tmp/voiceagent.tgz &&
+        .venv/bin/pip install -q -r requirements.txt && sudo systemctl restart voiceagent'
+
+Logs: `sudo journalctl -u voiceagent -f`. Telegram chat id: send the bot a message, then open
+`https://api.telegram.org/bot<TOKEN>/getUpdates` and take `message.chat.id`.
 
 ## Tests and checks
 

@@ -1,0 +1,21 @@
+# /etc/systemd/system/voiceagent.service on the prod server. Paths and user are that server's.
+[Unit]
+Description=Voice Agent (voicemail bot, aiohttp)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=dev2
+Group=dev2
+WorkingDirectory=/home/dev/tiennm/voiceagent
+Environment=PYTHONUNBUFFERED=1
+# Loopback only (HOST=127.0.0.1 in .env): nginx serves it at /voiceagent/ and strips the prefix.
+ExecStart=/home/dev/tiennm/voiceagent/.venv/bin/python -m voice_agent.server
+Restart=always
+RestartSec=5
+MemoryMax=1G
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target
