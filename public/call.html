@@ -33,6 +33,7 @@
             <option value="">mặc định của máy chủ</option>
             <option value="classic">classic: nhận dạng → chat model → ElevenLabs</option>
             <option value="realtime">realtime: một model nghe và nói (giọng OpenAI)</option>
+            <option value="hybrid">hybrid: model realtime nghe, trả lời bằng chữ → ElevenLabs đọc</option>
           </select>
         </label>
         <label>
@@ -43,7 +44,7 @@
             <option>gpt-realtime-2.1</option>
             <option>gpt-realtime-mini</option>
           </select>
-          <small>chỉ pipeline realtime; chỉ hai model đầu có giá trong pricing.json</small>
+          <small>pipeline realtime và hybrid; chỉ hai model đầu có giá trong pricing.json</small>
         </label>
         <label>
           Giọng realtime

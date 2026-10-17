@@ -1,11 +1,12 @@
 import asyncio
 import base64
+from types import SimpleNamespace
 
 import pytest
 
-from fakes import FakeWs, fake_ws_connect, tick
+from fakes import FakeTts, FakeWs, fake_ws_connect, tick
 from voice_agent.call_record import compute_cost
-from voice_agent.realtime_agent import RealtimeAgent
+from voice_agent.realtime_agent import HybridAgent, RealtimeAgent
 
 
 def make_agent(ws, **kwargs):
@@ -95,6 +96,123 @@ async def test_an_upstream_drop_ends_the_call_instead_of_leaving_dead_air():
     assert any(c['type'] == 'error' for c in controls)
     assert hangups == [True]
     agent.stop()
+
+
+# --- hybrid: realtime listens, answers in text, ElevenLabs speaks -------------
+
+
+def make_hybrid(ws, tts=None, **kwargs):
+    ws_connect, _ = fake_ws_connect(ws)
+    ctx = SimpleNamespace(tts=tts or FakeTts(), controls=[], audio=[], hangups=[])
+    ctx.agent = HybridAgent(
+        api_key='sk-test', model='gpt-realtime-2.1-mini', instructions='be brief', tts_client=ctx.tts,
+        ws_connect=ws_connect, send_control=ctx.controls.append, send_audio=ctx.audio.append,
+        on_hangup=lambda: ctx.hangups.append(True), **kwargs,
+    )
+    return ctx
+
+
+def reply(ws, *deltas, output=()):
+    ws.feed({'type': 'response.created', 'response': {}})
+    for delta in deltas:
+        ws.feed({'type': 'response.output_text.delta', 'delta': delta})
+    ws.feed({'type': 'response.output_text.done', 'text': ''.join(deltas)})
+    ws.feed({'type': 'response.done', 'response': {'status': 'completed', 'output': list(output)}})
+
+
+async def test_hybrid_asks_for_text_and_speaks_the_greeting_itself():
+    ws = FakeWs()
+    ctx = make_hybrid(ws, greeting='Xin chào, bạn cần nhắn gì không ạ?')
+
+    await ctx.agent.start()
+    await tick()
+
+    session = ws.sent[0]['session']
+    assert session['output_modalities'] == ['text']
+    assert 'output' not in session['audio']
+    assert session['tools'][0]['name'] == 'end_call'
+    assert not any(m['type'] == 'response.create' for m in ws.sent), 'the greeting costs no model round trip'
+    assert ws.sent[1]['item']['role'] == 'assistant'
+    assert ws.sent[1]['item']['content'] == [{'type': 'output_text', 'text': 'Xin chào, bạn cần nhắn gì không ạ?'}]
+    assert ctx.tts.sent_text == ['Xin chào,', 'bạn cần nhắn gì không ạ?']
+    assert ctx.tts.end_turns == 1
+    assert {'type': 'transcript', 'role': 'assistant', 'text': 'Xin chào, bạn cần nhắn gì không ạ?'} in ctx.controls
+    ctx.agent.stop()
+
+
+async def test_hybrid_speaks_the_text_reply_and_listens_once_tts_is_done(monkeypatch):
+    ws = FakeWs()
+    ctx = make_hybrid(ws, silence_timeout=60)
+    await ctx.agent.start()
+
+    ws.feed({'type': 'input_audio_buffer.speech_stopped'})
+    reply(ws, 'Dạ, mình ', 'ghi nhận rồi.')
+    await tick()
+
+    assert ctx.tts.connects == 1
+    assert ctx.tts.sent_text == ['Dạ,', 'mình ghi nhận rồi.']
+    assert ctx.tts.end_turns == 1
+    assert {'type': 'transcript', 'role': 'assistant', 'text': 'Dạ, mình ghi nhận rồi.'} in ctx.controls
+    assert {'type': 'state', 'state': 'listening'} not in ctx.controls, 'still speaking until TTS is done'
+
+    ctx.tts.emit('audio_chunk', b'\x01\x02')
+    ctx.tts.emit('turn_complete')
+
+    assert ctx.audio == [b'\x01\x02']
+    latency = next(c for c in ctx.controls if c['type'] == 'latency')
+    assert set(latency) == {'type', 'llm_ms', 'tts_ms', 'response_ms'}
+    assert ctx.controls[-1] == {'type': 'state', 'state': 'listening'}
+    ctx.agent.stop()
+
+
+async def test_hybrid_barge_in_cuts_the_spoken_reply():
+    ws = FakeWs()
+    ctx = make_hybrid(ws)
+    await ctx.agent.start()
+
+    reply(ws, 'Một câu trả lời dài.')
+    await tick()
+    assert ctx.tts.end_turns == 1  # all text sent, audio still streaming back
+
+    ws.feed({'type': 'input_audio_buffer.speech_started'})
+    await tick()
+
+    assert ctx.tts.aborts == 1
+    assert {'type': 'interrupt'} in ctx.controls
+    ctx.agent.stop()
+
+
+async def test_hybrid_hangs_up_after_the_goodbye_has_been_spoken(monkeypatch):
+    monkeypatch.setattr('voice_agent.realtime_agent.GOODBYE_GRACE', 0.01)
+    ws = FakeWs()
+    ctx = make_hybrid(ws, silence_timeout=60)
+    await ctx.agent.start()
+
+    reply(ws, 'Cảm ơn bạn, chào nhé.', output=[{'type': 'function_call', 'name': 'end_call'}])
+    await tick()
+    await asyncio.sleep(0.05)
+    assert ctx.hangups == [], 'the goodbye is still being spoken'
+
+    ctx.tts.emit('turn_complete')
+    await asyncio.sleep(0.05)
+    assert ctx.hangups == [True]
+    ctx.agent.stop()
+
+
+async def test_hybrid_end_call_without_words_hangs_up_at_once(monkeypatch):
+    monkeypatch.setattr('voice_agent.realtime_agent.GOODBYE_GRACE', 0.01)
+    ws = FakeWs()
+    ctx = make_hybrid(ws, silence_timeout=60)
+    await ctx.agent.start()
+
+    ws.feed({'type': 'response.created', 'response': {}})
+    ws.feed({'type': 'response.done', 'response': {'status': 'completed', 'output': [{'type': 'function_call', 'name': 'end_call'}]}})
+    await tick()
+    await asyncio.sleep(0.05)
+
+    assert ctx.hangups == [True]
+    assert ctx.tts.sent_text == []
+    ctx.agent.stop()
 
 
 def test_realtime_cost_prices_each_token_kind(tmp_path):

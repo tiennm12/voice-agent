@@ -170,7 +170,9 @@ function handleServerMessage(event) {
     if (msg.type === 'state') setStatus(msg.state);
     if (msg.type === 'error') appendTranscript('error', msg.message);
     if (msg.type === 'latency') {
-      const split = msg.stt_ms === undefined ? '' : ` (stt ${msg.stt_ms} · llm ${msg.llm_ms} · tts ${msg.tts_ms})`;
+      // Each pipeline reports the steps it has: classic stt/llm/tts, hybrid llm/tts, realtime none.
+      const steps = ['stt', 'llm', 'tts'].filter((step) => msg[`${step}_ms`] !== undefined);
+      const split = steps.length ? ` (${steps.map((step) => `${step} ${msg[`${step}_ms`]}`).join(' · ')})` : '';
       appendTranscript('latency', `chờ ${msg.response_ms}ms${split}`);
     }
     if (msg.type === 'interrupt') player.stop();

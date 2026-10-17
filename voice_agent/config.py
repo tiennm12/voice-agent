@@ -42,11 +42,12 @@ class Config:
     utc_offset_hours: float
     public_base_url: str | None
     urgent_reminder_minutes: float
-    # 'classic' = STT -> chat model -> ElevenLabs TTS; 'realtime' = one speech-to-speech session.
+    # 'classic' = STT -> chat model -> ElevenLabs TTS; 'realtime' = one speech-to-speech session;
+    # 'hybrid' = a Realtime session hears the caller and answers in text, spoken by ElevenLabs.
     pipeline: str = 'classic'
     vad_type: str = 'server_vad'  # or 'semantic_vad', which ignores vad_silence_ms / vad_threshold
     vad_eagerness: str | None = None  # semantic_vad only: low / medium / high
-    agent_model: str = 'gpt-realtime-2.1'  # the speech-to-speech model, pipeline=realtime
+    agent_model: str = 'gpt-realtime-2.1'  # the Realtime model of pipeline=realtime and pipeline=hybrid
     agent_voice: str = 'marin'
     agent_reasoning: str | None = None  # pipeline=realtime; None = the model's own default
 
@@ -62,7 +63,7 @@ OVERRIDE_CHOICES = {
     'openai_transcribe_model': {'gpt-4o-transcribe', 'gpt-4o-mini-transcribe'},
     'openai_chat_model': {'gpt-6-luna', 'gpt-4.1-mini', 'gpt-4o-mini', 'gpt-4.1-nano'},
     'elevenlabs_model_id': {'eleven_flash_v2_5', 'eleven_turbo_v2_5'},
-    'pipeline': {'classic', 'realtime'},
+    'pipeline': {'classic', 'realtime', 'hybrid'},
     'vad_type': {'server_vad', 'semantic_vad'},
     'vad_eagerness': {'low', 'medium', 'high'},
     'agent_model': {'gpt-realtime-2.1', 'gpt-realtime-2.1-mini', 'gpt-realtime-mini', 'gpt-realtime-2', 'gpt-realtime'},

@@ -290,6 +290,24 @@ async def test_an_unknown_audio_format_falls_back_to_mp3(served):
     await ws.close()
 
 
+async def test_the_hybrid_pipeline_listens_with_realtime_and_speaks_with_elevenlabs(tmp_path):
+    client, upstream = await start_app(tmp_path)
+    try:
+        ws = await client.ws_connect('/ws?pipeline=hybrid')
+        await upstream.tts_socket(0)  # the greeting, spoken by ElevenLabs
+
+        session = upstream.stt.sent[0]['session']  # the one OpenAI socket is the Realtime session
+        assert session['output_modalities'] == ['text']
+        assert upstream.stt.sent[1]['type'] == 'conversation.item.create'
+        await ws.close()
+
+        call = await saved_call(client, lambda call: call['summary'])
+        assert call['usage']['tts_characters'] > len(GREETING)
+        assert call['transcript'][0] == {**call['transcript'][0], 'role': 'assistant', 'text': GREETING}
+    finally:
+        await client.close()
+
+
 async def test_calls_past_the_retention_period_are_purged_when_the_server_starts(tmp_path):
     # First run records a call; RETENTION_DAYS=0 on the next start makes every finished call "old".
     client, upstream = await start_app(tmp_path)

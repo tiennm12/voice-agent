@@ -3,6 +3,7 @@ import logging
 import time
 from contextlib import aclosing
 
+from .call_timers import GOODBYE_GRACE, CallTimers
 from .config import HANGUP_MARKER
 from .session_state import SessionState
 from .text_chunker import TextChunker
@@ -10,9 +11,6 @@ from .text_chunker import TextChunker
 log = logging.getLogger(__name__)
 
 LLM_ERROR_APOLOGY = 'Xin lỗi, tôi gặp sự cố kỹ thuật, bạn nói lại được không?'
-
-# Seconds between the goodbye finishing on the caller's end and the hangup.
-GOODBYE_GRACE = 0.5
 
 
 async def _say(text):
@@ -53,23 +51,15 @@ class SessionOrchestrator:
         self._send_audio = send_audio
         self._tag = f'[{session_id}]'
         self._greeting = greeting
-        self._on_hangup = on_hangup
         self._silence_timeout = silence_timeout
-        self._max_call = max_call
+        self._timers = CallTimers(on_hangup, max_call, self._tag)
 
         self._state = SessionState(on_transition=self._on_transition)
         self._history = []
         self._turn = None  # the task of the turn still allowed to speak, if any
         self._hangup_after_turn = False  # the reply being spoken is the goodbye
-        self._hangup_timer = None
-        self._max_call_timer = None
-        self._hung_up = False
         self._speech_stopped_at = None  # when the caller last went quiet, until a turn claims it
         self._marks = None  # timestamps of the turn whose first audio has not arrived yet
-        # ponytail: when the caller will have heard everything sent so far, estimated
-        # from bytes sent (ignores network and client buffering — GOODBYE_GRACE and
-        # silence_timeout absorb it). Upgrade: have the client report playback end.
-        self._playback_ends_at = 0.0
 
         stt_client.on('speech_started', self._on_speech_started)
         stt_client.on('speech_stopped', self._on_speech_stopped)
@@ -82,8 +72,7 @@ class SessionOrchestrator:
         tts_client.on('disconnected', self._on_tts_disconnected)
 
     async def start(self):
-        # A hard cap, so a call that never wraps up can't hang forever or burn credit.
-        self._max_call_timer = asyncio.get_running_loop().call_later(self._max_call, self._hang_up)
+        self._timers.start()
         self._state.transition('CALL_STARTED')
         await self._stt.connect()
         # Speak first instead of waiting for the caller to say something — reuses the
@@ -96,8 +85,7 @@ class SessionOrchestrator:
     def stop(self):
         # Abandon first so we don't keep paying for tokens nobody will hear.
         self._abandon_turn()
-        if self._max_call_timer:
-            self._max_call_timer.cancel()
+        self._timers.stop()
         self._state.transition('CALL_ENDED')
         self._stt.close()
         self._tts.abort()
@@ -108,35 +96,11 @@ class SessionOrchestrator:
     # --- hanging up --------------------------------------------------------
 
     def _on_transition(self, state, event):
-        self._disarm_hangup()
+        self._timers.disarm()
         if state == 'listening':
             # The agent has nothing more to say for now: either that was the goodbye,
             # or it is the caller's move and staying silent counts against them.
-            wait = GOODBYE_GRACE if self._hangup_after_turn else self._silence_timeout
-            self._arm_hangup(self._playback_remaining() + wait)
-
-    def _arm_hangup(self, delay):
-        self._disarm_hangup()
-        self._hangup_timer = asyncio.get_running_loop().call_later(delay, self._hang_up)
-
-    def _disarm_hangup(self):
-        if self._hangup_timer:
-            self._hangup_timer.cancel()
-            self._hangup_timer = None
-
-    def _hang_up(self):
-        self._disarm_hangup()
-        if self._max_call_timer:
-            self._max_call_timer.cancel()
-        if self._hung_up:
-            return
-        self._hung_up = True
-        log.info('%s hanging up', self._tag)
-        if self._on_hangup:
-            self._on_hangup()
-
-    def _playback_remaining(self):
-        return max(0.0, self._playback_ends_at - time.monotonic())
+            self._timers.arm(GOODBYE_GRACE if self._hangup_after_turn else self._silence_timeout)
 
     # --- upstream events -------------------------------------------------
 
@@ -147,19 +111,19 @@ class SessionOrchestrator:
         # over the agent, state may already be back to 'listening' even though audio
         # is still audibly playing on the phone.
         self._send_control({'type': 'interrupt'})
-        self._playback_ends_at = 0.0
+        self._timers.reset_playback()
         self._hangup_after_turn = False  # talking over the goodbye keeps the call open
         if self._state.current in ('thinking', 'speaking'):
             self._abandon_turn()
             self._tts.abort()
             self._state.transition('USER_INTERRUPTED')
         # The caller is mid-sentence: silence doesn't count until they stop.
-        self._disarm_hangup()
+        self._timers.disarm()
 
     def _on_speech_stopped(self):
         self._speech_stopped_at = time.monotonic()
         if self._state.current == 'listening':
-            self._arm_hangup(self._silence_timeout)
+            self._timers.arm(self._silence_timeout)
 
     def _on_transcript_final(self, transcript):
         if self._state.current != 'listening':
@@ -182,11 +146,11 @@ class SessionOrchestrator:
         self._send_control({'type': 'error', 'message': 'Mất kết nối dịch vụ nhận diện giọng nói.'})
         if self._state.current != 'idle':
             self._state.transition('CALL_ENDED')
-        self._hang_up()
+        self._timers.hang_up()
 
     def _on_audio_chunk(self, data):
         now = time.monotonic()
-        self._playback_ends_at = max(self._playback_ends_at, now) + len(data) / self._tts.bytes_per_second
+        self._timers.note_audio(len(data), self._tts.bytes_per_second)
         self._send_audio(data)
         if self._marks and 'text' in self._marks:  # the first audio of the turn: its latency is now known
             marks, self._marks = self._marks, None

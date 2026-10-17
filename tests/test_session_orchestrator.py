@@ -2,7 +2,7 @@ import asyncio
 import logging
 from types import SimpleNamespace
 
-from fakes import tick
+from fakes import FakeTts, tick
 from voice_agent.session_orchestrator import LLM_ERROR_APOLOGY, SessionOrchestrator
 
 DONE = object()
@@ -21,46 +21,6 @@ class FakeStt:
 
     def close(self):
         self.closes += 1
-
-    def on(self, name, handler):
-        self._handlers[name] = handler
-
-    def emit(self, name, *args):
-        self._handlers[name](*args)
-
-
-class FakeTts:
-    """connect() succeeds at once, fails with connect_error, or (deferred) waits for resolve_connect()."""
-
-    def __init__(self, connect_error=None, deferred=False):
-        self._handlers = {}
-        self._connect_error = connect_error
-        self._gate = asyncio.Event()
-        if not deferred:
-            self._gate.set()
-        self.connects = 0
-        self.sent_text = []
-        self.end_turns = 0
-        self.aborts = 0
-        self.bytes_per_second = 16000
-
-    async def connect(self):
-        self.connects += 1
-        await self._gate.wait()
-        if self._connect_error:
-            raise self._connect_error
-
-    def resolve_connect(self):
-        self._gate.set()
-
-    async def send_text(self, text):
-        self.sent_text.append(text)
-
-    async def end_turn(self):
-        self.end_turns += 1
-
-    def abort(self):
-        self.aborts += 1
 
     def on(self, name, handler):
         self._handlers[name] = handler
