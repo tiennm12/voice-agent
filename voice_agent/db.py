@@ -105,6 +105,14 @@ class Database:
         ).fetchall()
         return [{**dict(row), 'read': bool(row['read'])} for row in rows]
 
+    def unsummarized_calls(self, since):
+        """Finished calls started since `since` that never got their summary (the server stopped first), oldest first."""
+        rows = self._conn.execute(
+            'SELECT id FROM calls WHERE summary IS NULL AND ended_at IS NOT NULL AND started_at >= ? ORDER BY started_at',
+            (since,),
+        ).fetchall()
+        return [self.get_call(row['id']) for row in rows]
+
     def mark_read(self, call_id, read=True):
         with self._conn:
             return self._conn.execute('UPDATE calls SET read = ? WHERE id = ?', (int(read), call_id)).rowcount > 0

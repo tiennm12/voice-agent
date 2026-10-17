@@ -308,6 +308,33 @@ async def test_calls_past_the_retention_period_are_purged_when_the_server_starts
         await client.close()
 
 
+async def test_a_call_the_server_stopped_before_summarizing_is_summarized_and_announced_on_the_next_start(tmp_path):
+    from datetime import datetime, timedelta, timezone
+
+    started = datetime.now(timezone(timedelta(hours=7))) - timedelta(minutes=5)
+    client, _ = await start_app(tmp_path)
+    client.app[DB].save_call({
+        'id': f'{started:%Y%m%dT%H%M%S}_cccccccc', 'session_id': 'cccccccc', 'caller': '0901234567',
+        'started_at': started.isoformat(), 'ended_at': (started + timedelta(seconds=20)).isoformat(),
+        'duration_seconds': 20, 'usage': {'llm_input_tokens': 100},
+        'transcript': [{'role': 'user', 'text': 'Mình là Nam, nhờ gọi lại.', 'at': started.isoformat()}],
+    })
+    await client.close()
+
+    http = FakeHttp()
+    client, _ = await start_app(tmp_path, http=http, TELEGRAM_BOT_TOKEN='TOKEN', TELEGRAM_CHAT_ID='42')
+    try:
+        call = await saved_call(client, lambda call: call['summary'])
+        assert call['caller_name'] == 'Anh Nam'
+        assert call['usage']['llm_input_tokens'] == 100 + 200
+        async with asyncio.timeout(3):
+            while not http.posts:
+                await asyncio.sleep(0.01)
+        assert 'Cuộc gọi nhỡ từ 0901234567' in http.posts[0][1]['text']
+    finally:
+        await client.close()
+
+
 # --- signed call links (the button under a Telegram notification) -----------
 
 CALL_ID = '20261013T090000_bbbbbbbb'
@@ -467,6 +494,6 @@ async def test_by_default_both_the_reply_and_the_summary_use_gpt_6_luna_without_
         reply, summary = upstream.openai.calls
         assert (reply['model'], reply['reasoning_effort'], reply['stream']) == ('gpt-6-luna', 'none', True)
         assert (summary['model'], summary['reasoning_effort']) == ('gpt-6-luna', 'none')
-        assert summary['response_format'] == {'type': 'json_object'}
+        assert summary['response_format']['type'] == 'json_schema'
     finally:
         await client.close()

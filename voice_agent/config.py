@@ -126,14 +126,6 @@ def build_system_prompt(document_text, owner_name='chủ máy', language='vi', h
     return '\n'.join(lines)
 
 
-def build_messages(system_prompt, history, new_user_text):
-    return [
-        {'role': 'system', 'content': system_prompt},
-        *history,
-        {'role': 'user', 'content': new_user_text},
-    ]
-
-
 def _read_system_doc():
     return (ROOT / 'config' / 'systemDoc.md').read_text(encoding='utf-8')
 

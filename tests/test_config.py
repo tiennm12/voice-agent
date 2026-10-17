@@ -2,7 +2,7 @@ from datetime import timedelta
 
 import pytest
 
-from voice_agent.config import HANGUP_MARKER, build_messages, build_system_prompt, load_config, with_overrides
+from voice_agent.config import HANGUP_MARKER, build_system_prompt, load_config, with_overrides
 
 from fakes import REQUIRED_ENV
 
@@ -32,27 +32,6 @@ def test_load_config_uses_the_injected_read_system_doc_function():
     called = []
     load_config(env=REQUIRED_ENV, read_system_doc=lambda: called.append(True) or 'doc')
     assert called == [True]
-
-
-def test_build_messages_puts_the_system_prompt_first_then_history_then_the_new_user_turn():
-    messages = build_messages(
-        'SYS',
-        [{'role': 'user', 'content': 'Chào'}, {'role': 'assistant', 'content': 'Chào bạn'}],
-        'Giờ mở cửa lúc mấy giờ?',
-    )
-    assert messages == [
-        {'role': 'system', 'content': 'SYS'},
-        {'role': 'user', 'content': 'Chào'},
-        {'role': 'assistant', 'content': 'Chào bạn'},
-        {'role': 'user', 'content': 'Giờ mở cửa lúc mấy giờ?'},
-    ]
-
-
-def test_build_messages_works_with_empty_history():
-    assert build_messages('SYS', [], 'Hi') == [
-        {'role': 'system', 'content': 'SYS'},
-        {'role': 'user', 'content': 'Hi'},
-    ]
 
 
 def test_build_system_prompt_fills_in_the_owner_name_and_appends_the_hangup_rule():

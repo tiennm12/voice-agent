@@ -80,7 +80,9 @@ class RealtimeSttClient(JsonWsClient):
             return text
         mean = sum(logprobs) / len(logprobs)
         dropped = self._min_logprob is not None and mean < self._min_logprob
-        log.info('[stt] confidence=%.2f %s %r', mean, 'DROPPED' if dropped else 'kept', text)
+        # The words stay out of the INFO log: the journal outlives RETENTION_DAYS.
+        log.info('[stt] confidence=%.2f %s', mean, 'DROPPED' if dropped else 'kept')
+        log.debug('[stt] %r', text)
         return None if dropped else text
 
     def _handle(self, event):

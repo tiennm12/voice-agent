@@ -1,9 +1,10 @@
 import asyncio
-import os
 import contextlib
 import json
 import logging
+import os
 import uuid
+from datetime import datetime, timedelta
 from functools import partial
 from pathlib import Path
 
@@ -14,7 +15,7 @@ from openai import AsyncOpenAI
 
 from .api import setup_api
 from .auth import load_secret, make_call_link, setup_auth
-from .call_record import CallRecord, purge_old_calls
+from .call_record import CallRecord, purge_old_calls, summarize_saved_call
 from .config import build_system_prompt, load_config, with_overrides
 from .elevenlabs_stt_client import ElevenLabsSttClient
 from .db import Database
@@ -50,6 +51,16 @@ def create_app(config, *, ws_connect=None, openai_client=None, http=None):
             await asyncio.sleep(PURGE_INTERVAL)
             purge()
 
+    async def finish_cut_short_calls():
+        # A restart between a call's end and its summary would leave the owner never told.
+        # Only recent calls: news of a days-old call is more confusing than useful.
+        since = (datetime.now(config.tz) - timedelta(days=1)).isoformat()
+        for call in db.unsummarized_calls(since):
+            call = await summarize_saved_call(db, upstream['openai'], config.pricing, call)
+            log.info('[%s] [server] summarized a call cut short by a restart', call['session_id'])
+            if upstream['notifier']:
+                await upstream['notifier'].notify_call(call)
+
     async def lifetime(app):
         upstream['http'] = http or aiohttp.ClientSession()
         upstream['ws_connect'] = ws_connect or upstream['http'].ws_connect
@@ -66,8 +77,10 @@ def create_app(config, *, ws_connect=None, openai_client=None, http=None):
             )
         purge()
         purging = asyncio.create_task(purge_daily())
+        finishing = asyncio.create_task(finish_cut_short_calls())
         yield
         purging.cancel()
+        finishing.cancel()
         if upstream['notifier']:
             upstream['notifier'].close()
         await upstream['http'].close()

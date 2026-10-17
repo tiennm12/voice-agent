@@ -56,6 +56,8 @@ class RealtimeAgent(JsonWsClient):
         self._playback_ends_at = 0.0
         self._hangup_timer = None
         self._max_call_timer = None
+        self._hung_up = False
+        self.on('disconnected', self._on_disconnected)
 
     async def start(self):
         self._max_call_timer = asyncio.get_running_loop().call_later(self._max_call, self._hang_up)
@@ -113,9 +115,18 @@ class RealtimeAgent(JsonWsClient):
         self._disarm_hangup()
         if self._max_call_timer:
             self._max_call_timer.cancel()
+        if self._hung_up:
+            return
+        self._hung_up = True
         log.info('%s hanging up', self._tag)
         if self._on_hangup:
             self._on_hangup()
+
+    def _on_disconnected(self):
+        # The one socket that hears and speaks is gone: nothing more can happen on this call.
+        log.error('%s realtime session disconnected unexpectedly', self._tag)
+        self._send_control({'type': 'error', 'message': 'Mất kết nối dịch vụ giọng nói.'})
+        self._hang_up()
 
     # --- upstream events -------------------------------------------------
 

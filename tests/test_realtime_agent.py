@@ -83,6 +83,20 @@ async def test_end_call_tool_hangs_up_after_the_goodbye(monkeypatch):
     agent.stop()
 
 
+async def test_an_upstream_drop_ends_the_call_instead_of_leaving_dead_air():
+    ws = FakeWs()
+    agent, _, controls, _, hangups = make_agent(ws, silence_timeout=60)
+    await agent.start()
+
+    ws.feed({'type': 'input_audio_buffer.speech_started'})  # caller mid-sentence: no hangup timer armed
+    ws.drop()
+    await tick()
+
+    assert any(c['type'] == 'error' for c in controls)
+    assert hangups == [True]
+    agent.stop()
+
+
 def test_realtime_cost_prices_each_token_kind(tmp_path):
     from voice_agent.call_record import CallRecord
 

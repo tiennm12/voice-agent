@@ -26,6 +26,25 @@ NORMAL, SPAM = 'bình thường', 'spam'
 NO_MESSAGE = {
     'caller_name': 'Không rõ', 'summary': 'Người gọi không để lại lời nhắn.', 'urgency': 'thấp', 'category': NORMAL,
 }
+# Structured output: the model can only answer with these four keys and these labels.
+SUMMARY_FORMAT = {
+    'type': 'json_schema',
+    'json_schema': {
+        'name': 'call_summary',
+        'strict': True,
+        'schema': {
+            'type': 'object',
+            'additionalProperties': False,
+            'required': ['caller_name', 'summary', 'urgency', 'category'],
+            'properties': {
+                'caller_name': {'type': 'string'},
+                'summary': {'type': 'string'},
+                'urgency': {'type': 'string', 'enum': ['thấp', 'trung bình', 'cao']},
+                'category': {'type': 'string', 'enum': [NORMAL, SPAM]},
+            },
+        },
+    },
+}
 
 
 def compute_cost(usage, pricing):
@@ -51,6 +70,53 @@ def compute_cost(usage, pricing):
     if pricing.get('usd_to_vnd'):
         cost['total_vnd'] = round(total * pricing['usd_to_vnd'])
     return cost
+
+
+def count_llm_usage(usage_counter, usage):
+    # ponytail: cached prompt tokens are billed at full input price here (slight
+    # overestimate). Split out prompt_tokens_details.cached_tokens if prompts grow past 1024 tokens.
+    usage_counter['llm_input_tokens'] += usage.prompt_tokens
+    usage_counter['llm_output_tokens'] += usage.completion_tokens
+
+
+async def summarize_transcript(openai_client, transcript, session_id=''):
+    """(summary, usage) for a transcript as CallRecord keeps it; usage is None when nothing was billed.
+
+    Never raises: a failed summary falls back to the caller's own words.
+    """
+    caller_lines = [turn['text'] for turn in transcript if turn['role'] == 'user' and turn['text'].strip()]
+    if not caller_lines:
+        return NO_MESSAGE, None
+    dialogue = '\n'.join(f"{'Người gọi' if turn['role'] == 'user' else 'Trợ lý'}: {turn['text']}" for turn in transcript)
+    usage = None
+    try:
+        response = await openai_client.chat.completions.create(
+            model=CHAT_MODEL,
+            messages=[{'role': 'system', 'content': SUMMARY_PROMPT}, {'role': 'user', 'content': dialogue}],
+            response_format=SUMMARY_FORMAT,
+            **({'reasoning_effort': CHAT_REASONING_EFFORT} if CHAT_REASONING_EFFORT else {}),
+        )
+        usage = response.usage
+        data = json.loads(response.choices[0].message.content)
+        summary = {key: str(data[key]) for key in ('caller_name', 'summary', 'urgency')}
+        # Spam silences the notification, so only the exact label counts; anything else is a normal call.
+        summary['category'] = SPAM if data.get('category') == SPAM else NORMAL
+        return summary, usage
+    except Exception:
+        log.exception("[%s] summary failed, falling back to the caller's own words", session_id)
+        return {
+            'caller_name': 'Không rõ', 'summary': ' '.join(caller_lines), 'urgency': 'không rõ', 'category': NORMAL,
+        }, usage
+
+
+async def summarize_saved_call(db, openai_client, pricing, call):
+    """Finishes a call saved without its summary (the server stopped first): summary, cost, saved. Returns the row."""
+    summary, usage = await summarize_transcript(openai_client, call['transcript'] or [], call['session_id'])
+    usage_counter = Counter(call['usage'] or {})
+    if usage:
+        count_llm_usage(usage_counter, usage)
+    db.save_call({**call, **summary, 'usage': dict(usage_counter), 'cost': compute_cost(usage_counter, pricing)})
+    return db.get_call(call['id'])
 
 
 def purge_old_calls(db, data_dir, retention_days, tz):
@@ -111,10 +177,7 @@ class CallRecord:
         self.pbx_session_id = re.sub(r'[^\w.@-]', '', str(meta.get('pbxSessionId') or ''))[:80] or None
 
     def add_llm_usage(self, usage):
-        # ponytail: cached prompt tokens are billed at full input price here (slight
-        # overestimate). Split out prompt_tokens_details.cached_tokens if prompts grow past 1024 tokens.
-        self.usage['llm_input_tokens'] += usage.prompt_tokens
-        self.usage['llm_output_tokens'] += usage.completion_tokens
+        count_llm_usage(self.usage, usage)
 
     def add_stt_usage(self, usage):
         if usage.get('type') == 'duration':
@@ -147,39 +210,12 @@ class CallRecord:
 
     async def summarize(self, openai_client):
         """Fills in summary and cost, and saves. Never raises: a failed summary falls back to the caller's words."""
-        caller_lines = [turn['text'] for turn in self.transcript if turn['role'] == 'user' and turn['text'].strip()]
-        if not caller_lines:
-            self.summary = NO_MESSAGE
-        else:
-            try:
-                self.summary = await self._summarize(openai_client)
-            except Exception:
-                log.exception("[%s] summary failed, falling back to the caller's own words", self.session_id)
-                self.summary = {
-                    'caller_name': 'Không rõ', 'summary': ' '.join(caller_lines), 'urgency': 'không rõ', 'category': NORMAL,
-                }
-
+        self.summary, usage = await summarize_transcript(openai_client, self.transcript, self.session_id)
+        if usage:
+            self.add_llm_usage(usage)
         self.cost = compute_cost(self.usage, self._pricing)
         self._save()
         log.info('[%s] [cost] total $%.4f %s usage %s', self.session_id, self.cost['total_usd'], self.cost, dict(self.usage))
-
-    async def _summarize(self, openai_client):
-        dialogue = '\n'.join(
-            f"{'Người gọi' if turn['role'] == 'user' else 'Trợ lý'}: {turn['text']}" for turn in self.transcript
-        )
-        response = await openai_client.chat.completions.create(
-            model=CHAT_MODEL,
-            messages=[{'role': 'system', 'content': SUMMARY_PROMPT}, {'role': 'user', 'content': dialogue}],
-            response_format={'type': 'json_object'},
-            **({'reasoning_effort': CHAT_REASONING_EFFORT} if CHAT_REASONING_EFFORT else {}),
-        )
-        if response.usage:
-            self.add_llm_usage(response.usage)
-        data = json.loads(response.choices[0].message.content)
-        summary = {key: str(data[key]) for key in ('caller_name', 'summary', 'urgency')}
-        # Spam silences the notification, so only the exact label counts; anything else is a normal call.
-        summary['category'] = SPAM if data.get('category') == SPAM else NORMAL
-        return summary
 
     def _save(self):
         summary = self.summary or {}

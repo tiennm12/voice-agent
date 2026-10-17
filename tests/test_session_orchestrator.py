@@ -207,6 +207,48 @@ async def test_barge_in_speech_started_while_speaking_aborts_the_llm_and_tts_tur
     assert has(ctx.control, type='interrupt')
 
 
+async def test_a_barged_in_turn_keeps_the_callers_words_and_what_was_already_said_in_history():
+    # VAD splits "Tôi là Nam, ... gọi về hợp đồng" into two turns on a short pause; the
+    # second must not reach the LLM without the first.
+    ctx = make(llm=FakeLlm('Chào Nam. Bạn cần'))  # first clause spoken, stream stays open
+
+    await ctx.orchestrator.start()
+    ctx.stt.emit('transcript_final', 'Tôi là Nam')
+    await tick()
+    assert ctx.tts.sent_text == ['Chào Nam.']
+
+    ctx.stt.emit('speech_started')
+    await tick()
+    ctx.stt.emit('transcript_final', 'gọi về hợp đồng')
+    await tick()
+
+    assert ctx.llm.calls[1] == [
+        {'role': 'system', 'content': 'SYS'},
+        {'role': 'user', 'content': 'Tôi là Nam'},
+        {'role': 'assistant', 'content': 'Chào Nam.'},
+        {'role': 'user', 'content': 'gọi về hợp đồng'},
+    ]
+    assert has(ctx.control, type='transcript', role='assistant', text='Chào Nam.')
+
+
+async def test_a_turn_barged_in_before_saying_anything_still_keeps_the_callers_words():
+    ctx = make()  # no tokens: the turn is still thinking when the caller talks again
+
+    await ctx.orchestrator.start()
+    ctx.stt.emit('transcript_final', 'Tôi là Nam')
+    await tick()
+    ctx.stt.emit('speech_started')
+    await tick()
+    ctx.stt.emit('transcript_final', 'gọi lại nhé')
+    await tick()
+
+    assert ctx.llm.calls[1][1:] == [
+        {'role': 'user', 'content': 'Tôi là Nam'},
+        {'role': 'user', 'content': 'gọi lại nhé'},
+    ]
+    assert not has(ctx.control, type='transcript', role='assistant')
+
+
 async def test_barge_in_speech_started_after_the_turn_already_completed_still_flushes_client_playback():
     # Regression: ElevenLabs can finish STREAMING a reply well before the browser
     # finishes PLAYING it, so state may already be 'listening' again by the time
@@ -381,15 +423,18 @@ async def test_stop_closes_the_stt_session_and_aborts_tts():
     assert ctx.tts.aborts == 1
 
 
-async def test_stt_client_disconnected_sends_an_error_control_message_and_does_not_throw():
+async def test_stt_client_disconnected_sends_an_error_and_hangs_up_once():
     ctx = make()
     await ctx.orchestrator.start()
 
     ctx.stt.emit('disconnected')
     assert has(ctx.control, type='error', message='Mất kết nối dịch vụ nhận diện giọng nói.')
+    # Nothing can hear the caller any more: end the call instead of leaving dead air until max_call.
+    assert ctx.hangups == [True]
 
     # The session is now dormant rather than throwing on any further event.
     ctx.stt.emit('disconnected')
+    assert ctx.hangups == [True]
 
 
 async def test_tts_client_disconnected_while_speaking_sends_an_error_and_returns_to_listening():

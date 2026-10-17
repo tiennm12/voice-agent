@@ -7,6 +7,9 @@ import aiohttp
 log = logging.getLogger(__name__)
 
 MAX_TEXT = 4096  # Telegram's limit for one message
+# Seconds to wait before each retry of a message Telegram could not take right now (outage,
+# rate limit, network drop). The notification is the point of the product: worth a few tries.
+RETRY_DELAYS = (2, 10)
 
 
 def notification_text(call):
@@ -32,17 +35,22 @@ async def send_message(http, token, chat_id, text, button=None):
     if button:
         label, url = button
         payload['reply_markup'] = {'inline_keyboard': [[{'text': label, 'url': url}]]}
-    try:
-        async with http.post(
-            f'https://api.telegram.org/bot{token}/sendMessage', json=payload, timeout=aiohttp.ClientTimeout(total=10),
-        ) as response:
-            if response.status == 200:
-                return True
-            # Never log the URL: it carries the bot token.
-            log.error('telegram sendMessage failed: %s %s', response.status, (await response.text())[:300])
-    except Exception as err:
-        # No traceback, and the token scrubbed: client errors like to quote the request URL.
-        log.error('telegram sendMessage failed: %s %s', type(err).__name__, str(err).replace(token, '***'))
+    for delay in (*RETRY_DELAYS, None):
+        try:
+            async with http.post(
+                f'https://api.telegram.org/bot{token}/sendMessage', json=payload, timeout=aiohttp.ClientTimeout(total=10),
+            ) as response:
+                if response.status == 200:
+                    return True
+                # Never log the URL: it carries the bot token.
+                log.error('telegram sendMessage failed: %s %s', response.status, (await response.text())[:300])
+                if response.status < 500 and response.status != 429:
+                    return False  # refused (bad token, unknown chat): a retry gets the same answer
+        except Exception as err:
+            # No traceback, and the token scrubbed: client errors like to quote the request URL.
+            log.error('telegram sendMessage failed: %s %s', type(err).__name__, str(err).replace(token, '***'))
+        if delay is not None:
+            await asyncio.sleep(delay)
     return False
 
 

@@ -3,7 +3,7 @@ import logging
 import time
 from contextlib import aclosing
 
-from .config import HANGUP_MARKER, build_messages
+from .config import HANGUP_MARKER
 from .session_state import SessionState
 from .text_chunker import TextChunker
 
@@ -63,6 +63,7 @@ class SessionOrchestrator:
         self._hangup_after_turn = False  # the reply being spoken is the goodbye
         self._hangup_timer = None
         self._max_call_timer = None
+        self._hung_up = False
         self._speech_stopped_at = None  # when the caller last went quiet, until a turn claims it
         self._marks = None  # timestamps of the turn whose first audio has not arrived yet
         # ponytail: when the caller will have heard everything sent so far, estimated
@@ -127,6 +128,9 @@ class SessionOrchestrator:
         self._disarm_hangup()
         if self._max_call_timer:
             self._max_call_timer.cancel()
+        if self._hung_up:
+            return
+        self._hung_up = True
         log.info('%s hanging up', self._tag)
         if self._on_hangup:
             self._on_hangup()
@@ -178,6 +182,7 @@ class SessionOrchestrator:
         self._send_control({'type': 'error', 'message': 'Mất kết nối dịch vụ nhận diện giọng nói.'})
         if self._state.current != 'idle':
             self._state.transition('CALL_ENDED')
+        self._hang_up()
 
     def _on_audio_chunk(self, data):
         now = time.monotonic()
@@ -222,12 +227,20 @@ class SessionOrchestrator:
     # --- turns -------------------------------------------------------------
 
     def _start_turn(self, user_text, is_kickoff=False):
+        # Into history now, not when the reply is done: a barge-in cancels the turn, and the
+        # caller's words must still reach the next turn (VAD splits sentences on short pauses).
+        if not is_kickoff:
+            self._history.append({'role': 'user', 'content': user_text})
         now = time.monotonic()
         # Without a speech_stopped event the clock starts at the transcript.
         self._marks = {'heard': self._speech_stopped_at or now, 'transcript': now, 'kickoff': is_kickoff}
         self._speech_stopped_at = None
         self._turn = asyncio.create_task(self._run_turn(user_text, is_kickoff, self._marks))
         self._turn.add_done_callback(self._on_turn_done)
+
+    def _remember_reply(self, text):
+        self._history.append({'role': 'assistant', 'content': text})
+        self._send_control({'type': 'transcript', 'role': 'assistant', 'text': text})
 
     def _abandon_turn(self):
         self._marks = None
@@ -274,6 +287,8 @@ class SessionOrchestrator:
         self._hangup_after_turn = False
         assistant_text = ''
         spoken = ''  # assistant_text up to the hangup marker
+        said = []  # chunks actually handed to TTS: what the caller heard if the turn is cut off
+        remembered = False  # the whole reply is already in history
         speaking = False
         pending = []  # chunks the chunker flushed, not yet sent to TTS
         chunker = TextChunker(on_flush=pending.append)
@@ -292,6 +307,7 @@ class SessionOrchestrator:
                 self._send_control({'type': 'state', 'state': 'speaking'})
                 marks['text'] = time.monotonic()
             await self._tts.send_text(text)
+            said.append(text)
 
         async def flush():
             while pending:
@@ -299,7 +315,7 @@ class SessionOrchestrator:
 
         try:
             source = _say(user_text) if is_kickoff else self._llm_stream(
-                build_messages(self._system_prompt, self._history, user_text),
+                [{'role': 'system', 'content': self._system_prompt}, *self._history],  # user_text is in history already
             )
             async with aclosing(source) as tokens:
                 async for token in tokens:
@@ -317,10 +333,8 @@ class SessionOrchestrator:
             self._hangup_after_turn = HANGUP_MARKER in assistant_text
             reply = spoken.strip()
             if reply:
-                if not is_kickoff:
-                    self._history.append({'role': 'user', 'content': user_text})
-                self._history.append({'role': 'assistant', 'content': reply})
-                self._send_control({'type': 'transcript', 'role': 'assistant', 'text': reply})
+                self._remember_reply(reply)
+                remembered = True
 
             await flush()
             if speaking:
@@ -330,6 +344,9 @@ class SessionOrchestrator:
                 # will come back to end the turn.
                 self._give_up_on_current_turn()
         except asyncio.CancelledError:
+            if said and not remembered:
+                # Cut off mid-reply: the caller heard this much, so the LLM must know it was said.
+                self._remember_reply(' '.join(said))
             raise
         except Exception as err:
             log.error('%s llm error', self._tag, exc_info=err)

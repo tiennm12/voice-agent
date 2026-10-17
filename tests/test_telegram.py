@@ -23,6 +23,11 @@ CALL = {
 }
 
 
+@pytest.fixture(autouse=True)
+def no_retry_wait(monkeypatch):
+    monkeypatch.setattr('voice_agent.telegram.RETRY_DELAYS', (0, 0))
+
+
 @pytest.fixture
 def db(tmp_path):
     database = Database(tmp_path / 'voicemail.db')
@@ -80,10 +85,18 @@ async def test_send_message_truncates_to_telegrams_limit():
     assert len(http.posts[0][1]['text']) == 4096
 
 
-async def test_a_refused_message_is_reported_as_failed(caplog):
-    assert await send_message(FakeHttp(status=403), 'TOKEN', '42', 'xin chào') is False
+async def test_a_refused_message_is_reported_as_failed_without_retrying(caplog):
+    http = FakeHttp(status=403)
+    assert await send_message(http, 'TOKEN', '42', 'xin chào') is False
+    assert len(http.posts) == 1, 'a refusal will not change on a retry'
     assert 'sendMessage failed: 403' in caplog.text
     assert 'TOKEN' not in caplog.text
+
+
+@pytest.mark.parametrize('http', [FakeHttp(status=502), FakeHttp(error=OSError('down'))])
+async def test_a_telegram_outage_or_network_drop_is_retried_before_giving_up(http):
+    assert await send_message(http, 'TOKEN', '42', 'xin chào') is False
+    assert len(http.posts) == 3
 
 
 async def test_a_network_error_is_logged_without_leaking_the_bot_token(caplog):

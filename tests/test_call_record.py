@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from fakes import FakeOpenai
-from voice_agent.call_record import CallRecord, compute_cost, purge_old_calls
+from voice_agent.call_record import CallRecord, compute_cost, purge_old_calls, summarize_saved_call
 from voice_agent.db import Database
 
 PRICING = {
@@ -145,7 +145,12 @@ async def test_summarize_fills_in_the_summary_and_prices_the_call(tmp_path, db):
 
     dialogue = openai.calls[0]['messages'][-1]['content']
     assert 'Người gọi: Mình là Nam, nhờ anh Tuấn gọi lại gấp về hợp đồng.' in dialogue
-    assert openai.calls[0]['response_format'] == {'type': 'json_object'}
+    # Structured output: the model can only answer with these keys and labels.
+    response_format = openai.calls[0]['response_format']
+    assert response_format['type'] == 'json_schema' and response_format['json_schema']['strict'] is True
+    properties = response_format['json_schema']['schema']['properties']
+    assert properties['urgency']['enum'] == ['thấp', 'trung bình', 'cao']
+    assert properties['category']['enum'] == ['bình thường', 'spam']
 
     call = db.get_call(record.id)
     assert (call['caller_name'], call['summary'], call['urgency']) == ('Anh Nam', 'Nhờ gọi lại về hợp đồng.', 'cao')
@@ -202,6 +207,22 @@ async def test_when_the_summary_llm_fails_the_call_is_kept_with_the_callers_own_
     assert len(call['transcript']) == 2
     assert 'nhờ anh Tuấn gọi lại gấp' in call['summary']
     assert call['total_usd'] is not None, 'the call is still priced'
+
+
+async def test_a_call_saved_without_its_summary_is_finished_from_the_database(tmp_path, db):
+    # The server stopped between close() and summarize(): only the saved row is left.
+    record = with_message(make_record(tmp_path, db))
+    record.add_llm_usage(SimpleNamespace(prompt_tokens=1000, completion_tokens=100))
+    record.close()
+    saved = db.get_call(record.id)
+
+    call = await summarize_saved_call(db, FakeOpenai(), PRICING, saved)
+
+    assert call == db.get_call(record.id)
+    assert (call['caller_name'], call['summary'], call['urgency']) == ('Anh Nam', 'Nhờ gọi lại về hợp đồng.', 'cao')
+    assert call['usage']['llm_input_tokens'] == 1200, 'the summary call is added to what the call already used'
+    assert call['total_usd'] == pytest.approx(1200 * 0.40 / 1e6 + 140 * 1.60 / 1e6)
+    assert [t['text'] for t in call['transcript']] == [t['text'] for t in saved['transcript']]
 
 
 def test_purge_removes_the_row_and_the_recording_of_calls_past_retention(tmp_path, db):

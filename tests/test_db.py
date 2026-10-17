@@ -123,6 +123,16 @@ def test_delete_older_than_removes_old_calls_and_returns_their_ids(db):
     assert db.get_call('new') is not None
 
 
+def test_unsummarized_calls_are_recent_finished_calls_without_a_summary_oldest_first(db):
+    db.save_call(call('late', '2026-10-13T10:00:00+07:00'))
+    db.save_call(call('early', '2026-10-13T09:00:00+07:00'))
+    db.save_call(call('done', '2026-10-13T09:30:00+07:00', summary='Nhờ gọi lại.'))
+    db.save_call(call('stale', '2026-10-10T09:00:00+07:00'))
+
+    assert [c['id'] for c in db.unsummarized_calls(since='2026-10-12T00:00:00+07:00')] == ['early', 'late']
+    assert db.unsummarized_calls(since='2026-10-12')[0]['transcript'][0]['text'] == 'Alo'
+
+
 def test_settings_round_trip_and_none_restores_the_default(db):
     assert db.get_settings() == {}
 
