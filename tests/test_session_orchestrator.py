@@ -3,6 +3,7 @@ import logging
 from types import SimpleNamespace
 
 from fakes import FakeTts, tick
+from voice_agent import session_orchestrator
 from voice_agent.session_orchestrator import LLM_ERROR_APOLOGY, SessionOrchestrator
 
 DONE = object()
@@ -335,6 +336,32 @@ async def test_llm_error_after_tts_is_connected_speaks_a_vietnamese_apology_inst
     assert not has(ctx.control, type='error', message='boom'), 'the raw error must not be shown to the user'
     assert has(ctx.control, type='state', state='speaking')
     assert has(ctx.control, type='transcript', role='assistant', text=LLM_ERROR_APOLOGY)
+
+
+async def test_an_llm_that_never_starts_answering_is_covered_by_the_apology(monkeypatch):
+    monkeypatch.setattr(session_orchestrator, 'FIRST_TOKEN_TIMEOUT', 0.05)
+    ctx = make()  # the stream never yields a token
+
+    await ctx.orchestrator.start()
+    ctx.stt.emit('transcript_final', 'Chào bạn')
+    await asyncio.sleep(0.15)
+
+    assert ctx.tts.sent_text == [LLM_ERROR_APOLOGY]
+    assert ctx.llm.cancelled == 1, 'the hung stream is closed'
+
+
+async def test_a_long_reply_is_not_cut_off_by_the_first_token_timeout(monkeypatch):
+    monkeypatch.setattr(session_orchestrator, 'FIRST_TOKEN_TIMEOUT', 0.05)
+    ctx = make(llm=FakeLlm('Dạ, '))
+
+    await ctx.orchestrator.start()
+    ctx.stt.emit('transcript_final', 'Chào bạn')
+    await asyncio.sleep(0.15)
+    ctx.llm.feed('mình ghi nhận rồi.')
+    ctx.llm.finish()
+    await tick()
+
+    assert ctx.tts.sent_text == ['Dạ,', 'mình ghi nhận rồi.']
 
 
 async def test_llm_error_while_tts_is_still_connecting_falls_back_to_an_error_control_message():

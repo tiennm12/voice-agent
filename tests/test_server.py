@@ -222,6 +222,24 @@ async def test_a_call_that_cannot_reach_stt_tells_the_browser_closes_and_is_stil
         await client.close()
 
 
+async def test_an_upstream_handshake_that_hangs_gives_up_in_seconds(tmp_path, monkeypatch):
+    from voice_agent import server
+
+    monkeypatch.setattr(server, 'CONNECT_TIMEOUT', 0.05)
+
+    class HangingUpstream(FakeUpstream):
+        async def ws_connect(self, url, headers=None):
+            await asyncio.sleep(3600)
+
+    client, _ = await start_app(tmp_path, HangingUpstream())
+    try:
+        ws = await client.ws_connect('/ws')
+        frames = await receive_until(ws, lambda f: False, timeout=2)
+        assert frames == [{'type': 'error', 'message': 'Không thể kết nối tới dịch vụ giọng nói.'}]
+    finally:
+        await client.close()
+
+
 async def test_a_call_whose_stt_drops_before_the_caller_speaks_is_filed_as_a_system_failure(served):
     client, upstream = served
     ws = await client.ws_connect('/ws')

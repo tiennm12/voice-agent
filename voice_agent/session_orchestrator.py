@@ -11,6 +11,8 @@ from .text_chunker import TextChunker
 log = logging.getLogger(__name__)
 
 LLM_ERROR_APOLOGY = 'Xin lỗi, tôi gặp sự cố kỹ thuật, bạn nói lại được không?'
+# Seconds the caller may wait for the first word of a reply before the apology is spoken instead.
+FIRST_TOKEN_TIMEOUT = 8
 
 
 async def _say(text):
@@ -281,8 +283,10 @@ class SessionOrchestrator:
             source = _say(user_text) if is_kickoff else self._llm_stream(
                 [{'role': 'system', 'content': self._system_prompt}, *self._history],  # user_text is in history already
             )
-            async with aclosing(source) as tokens:
+            # Only the wait for the first word is bounded: a long reply may take as long as it takes.
+            async with asyncio.timeout(FIRST_TOKEN_TIMEOUT) as first_token, aclosing(source) as tokens:
                 async for token in tokens:
+                    first_token.reschedule(None)
                     if not is_kickoff:
                         marks.setdefault('token', time.monotonic())
                     assistant_text += token

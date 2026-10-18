@@ -34,6 +34,10 @@ log = logging.getLogger(__name__)
 PUBLIC_DIR = Path(__file__).resolve().parent.parent / 'public'
 DB = web.AppKey('db', Database)
 PURGE_INTERVAL = 24 * 3600
+# Seconds. A caller sits in dead air while an upstream hangs: aiohttp would wait 5 minutes for a
+# WebSocket handshake and the OpenAI client 10 minutes (with two retries) for an answer.
+CONNECT_TIMEOUT = 5
+OPENAI_TIMEOUT = 10
 
 
 def create_app(config, *, ws_connect=None, openai_client=None, http=None):
@@ -65,8 +69,16 @@ def create_app(config, *, ws_connect=None, openai_client=None, http=None):
 
     async def lifetime(app):
         upstream['http'] = http or aiohttp.ClientSession()
-        upstream['ws_connect'] = ws_connect or upstream['http'].ws_connect
-        upstream['openai'] = openai_client or AsyncOpenAI(api_key=config.openai_api_key)
+        connect = ws_connect or upstream['http'].ws_connect
+
+        async def ws_connect_in_time(url, **kwargs):
+            async with asyncio.timeout(CONNECT_TIMEOUT):
+                return await connect(url, **kwargs)
+
+        upstream['ws_connect'] = ws_connect_in_time
+        upstream['openai'] = openai_client or AsyncOpenAI(
+            api_key=config.openai_api_key, timeout=OPENAI_TIMEOUT, max_retries=1,
+        )
         if config.telegram_bot_token and config.telegram_chat_id:
             upstream['notifier'] = TelegramNotifier(
                 http=upstream['http'],
