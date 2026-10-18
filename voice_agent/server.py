@@ -26,7 +26,7 @@ from .realtime_stt_client import RealtimeSttClient, turn_detection
 from .session_orchestrator import SessionOrchestrator
 from .settings import effective_settings, pick_greeting
 from .soniox_stt_client import SonioxSttClient
-from .telegram import TelegramNotifier
+from .telegram import TelegramAlerts, TelegramNotifier
 from .tts_client import AUDIO_FORMATS, TtsClient
 
 log = logging.getLogger(__name__)
@@ -99,6 +99,8 @@ def create_app(config, *, ws_connect=None, openai_client=None, http=None):
                 link_for=partial(make_call_link, secret, config.public_base_url) if config.public_base_url else None,
                 reminder_minutes=config.urgent_reminder_minutes,
             )
+            alerts = TelegramAlerts(upstream['notifier'])
+            logging.getLogger(__package__).addHandler(alerts)
         purge()
         purging = asyncio.create_task(purge_daily())
         finishing = asyncio.create_task(finish_cut_short_calls())
@@ -106,6 +108,7 @@ def create_app(config, *, ws_connect=None, openai_client=None, http=None):
         purging.cancel()
         finishing.cancel()
         if upstream['notifier']:
+            logging.getLogger(__package__).removeHandler(alerts)
             upstream['notifier'].close()
         await upstream['http'].close()
         await upstream['openai'].close()

@@ -256,6 +256,25 @@ async def test_a_call_that_cannot_reach_stt_tells_the_browser_closes_and_is_stil
         await client.close()
 
 
+async def test_a_call_that_cannot_start_also_raises_an_alert_on_telegram(tmp_path):
+    http = FakeHttp()
+    client, _ = await start_app(
+        tmp_path, FakeUpstream(stt_error=OSError('dns failure')), http=http,
+        TELEGRAM_BOT_TOKEN='TOKEN', TELEGRAM_CHAT_ID='42',
+    )
+    try:
+        ws = await client.ws_connect('/ws')
+        await receive_until(ws, lambda f: False)
+        async with asyncio.timeout(3):
+            while len(http.posts) < 2:
+                await asyncio.sleep(0.01)
+        texts = [payload['text'] for _, payload in http.posts]
+        assert any(text.startswith('⚠️ Voice Agent:') and 'OSError: dns failure' in text for text in texts), texts
+        assert any('Hệ thống gặp lỗi' in text for text in texts), 'and the call itself is announced'
+    finally:
+        await client.close()
+
+
 async def test_an_upstream_handshake_that_hangs_gives_up_in_seconds(tmp_path, monkeypatch):
     from voice_agent import server
 

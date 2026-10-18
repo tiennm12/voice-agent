@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import time
 from datetime import datetime
 
 import aiohttp
@@ -96,6 +97,46 @@ class TelegramNotifier:
     def _send(self, text, button):
         return send_message(self._http, self._token, self._chat_id, text, button)
 
+    def alert(self, text):
+        """A message about the system itself, sent in the background (see TelegramAlerts)."""
+        task = asyncio.create_task(self._send(f'⚠️ Voice Agent: {text}', None))
+        self._reminders.add(task)
+        task.add_done_callback(self._reminders.discard)
+
     def close(self):
         for task in self._reminders:
             task.cancel()
+
+
+class TelegramAlerts(logging.Handler):
+    """Forwards the server's ERROR log lines to Telegram, at most one message per `interval` seconds.
+
+    An expired key or an exhausted credit fails every call while the server keeps running: the owner
+    hears of it before a caller has to complain. Errors in a burst are counted into the next message.
+    """
+
+    def __init__(self, notifier, interval=600):
+        super().__init__(logging.ERROR)
+        self._notifier = notifier
+        self._interval = interval
+        self._last = None
+        self._held = 0
+
+    def emit(self, record):
+        if record.name == __name__:
+            return  # Telegram's own failures can't be reported through Telegram
+        now = time.monotonic()
+        if self._last is not None and now - self._last < self._interval:
+            self._held += 1
+            return
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return  # logged outside the server's event loop: nothing can send it
+        text = record.getMessage()
+        if record.exc_info and record.exc_info[1]:
+            text += f' ({type(record.exc_info[1]).__name__}: {record.exc_info[1]})'
+        if self._held:
+            text += f' (+{self._held} lỗi trước đó)'
+        self._last, self._held = now, 0
+        self._notifier.alert(text[:500])

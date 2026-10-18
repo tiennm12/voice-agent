@@ -67,6 +67,8 @@ announced with its summary and cost.
 - An urgent call is flagged and repeated every `URGENT_REMINDER_MINUTES` (three
   times at most) until it is opened.
 - A call the summary files as spam is not announced.
+- Server errors (an upstream that cannot be reached, an expired key, a failed summary) are
+  sent too, as "⚠️ Voice Agent: …", at most one message per 10 minutes.
 
 ## Answering real calls through eTelecom
 

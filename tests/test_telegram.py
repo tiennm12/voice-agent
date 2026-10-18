@@ -1,10 +1,11 @@
 import asyncio
+import logging
 
 import pytest
 
-from fakes import FakeHttp
+from fakes import FakeHttp, tick
 from voice_agent.db import Database
-from voice_agent.telegram import TelegramNotifier, notification_text, send_message
+from voice_agent.telegram import TelegramAlerts, TelegramNotifier, notification_text, send_message
 
 CALL = {
     'id': '20261013T164551_cea46fc5',
@@ -43,6 +44,33 @@ def saved(db, **fields):
     call = {**CALL, **fields}
     db.save_call(call)
     return db.get_call(call['id'])
+
+
+async def test_error_log_lines_reach_telegram_at_most_once_per_interval(db):
+    http = FakeHttp()
+    alerts = TelegramAlerts(make_notifier(db, http), interval=3600)
+    logger = logging.getLogger('voice_agent.test_alerts')
+    logger.addHandler(alerts)
+    try:
+        try:
+            raise ConnectionError('quota exceeded')
+        except ConnectionError:
+            logger.exception('[abc] failed to start session')
+        logger.error('second failure')  # inside the interval: held back, counted
+        logger.warning('not an error')
+        logging.getLogger('voice_agent.telegram').error('telegram is down')  # can't go through Telegram
+        await tick()
+
+        assert [payload['text'] for _, payload in http.posts] == [
+            '⚠️ Voice Agent: [abc] failed to start session (ConnectionError: quota exceeded)',
+        ]
+
+        alerts._last -= 3600  # the interval has passed
+        logger.error('third failure')
+        await tick()
+        assert http.posts[-1][1]['text'] == '⚠️ Voice Agent: third failure (+1 lỗi trước đó)'
+    finally:
+        logger.removeHandler(alerts)
 
 
 def test_notification_text_gives_who_what_how_urgent_how_long_and_what_it_cost():
