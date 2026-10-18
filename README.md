@@ -49,6 +49,10 @@ Listing or cloning voices needs an ElevenLabs API key with the `voices_read` /
 - `data/calls/<id>/caller.wav` — the caller's side of the call.
 - Calls older than `RETENTION_DAYS` (default 30) are deleted, recording
   included.
+- `data/backups/voicemail-<date>.db` — a copy of the database taken at start-up and
+  daily, the last 7 days kept (fewer if `RETENTION_DAYS` is shorter). Same disk, no
+  recordings: copy the folder elsewhere if the disk itself must be survivable. To
+  restore, stop the server and copy one over `voicemail.db`.
 
 `data/secret.key` signs login sessions and call links. It is created on first
 start; deleting it logs everyone out and voids links already sent.

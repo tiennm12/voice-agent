@@ -3,6 +3,7 @@ import contextlib
 import json
 import logging
 import os
+import sqlite3
 import uuid
 from datetime import datetime, timedelta
 from functools import partial
@@ -15,7 +16,7 @@ from openai import AsyncOpenAI
 
 from .api import setup_api
 from .auth import load_secret, make_call_link, setup_auth
-from .call_record import CallRecord, purge_old_calls, summarize_saved_call
+from .call_record import CallRecord, back_up_database, purge_old_calls, summarize_saved_call
 from .config import build_system_prompt, load_config, with_overrides
 from .elevenlabs_stt_client import ElevenLabsSttClient
 from .db import Database
@@ -61,6 +62,10 @@ def create_app(config, *, ws_connect=None, openai_client=None, http=None):
         purged = purge_old_calls(db, config.data_dir, config.retention_days, config.tz)
         if purged:
             log.info('[server] purged %d call(s) older than %g days', len(purged), config.retention_days)
+        try:
+            back_up_database(db, config.data_dir, config.retention_days, config.tz)
+        except (OSError, sqlite3.Error):
+            log.exception('[server] database backup failed')  # calls still work: never fatal
 
     async def purge_daily():
         while True:

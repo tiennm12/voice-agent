@@ -143,6 +143,22 @@ def purge_old_calls(db, data_dir, retention_days, tz):
     return purged
 
 
+def back_up_database(db, data_dir, retention_days, tz, keep=7):
+    """Today's copy of the database in <data_dir>/backups, keeping the last `keep` days' copies.
+
+    Never more days than the retention period: a backup must not keep a purged call alive much longer.
+    ponytail: same disk as the database, so it survives a bad deploy or a corrupt file, not a lost disk;
+    recordings are not copied. Sync data_dir/backups elsewhere if that ever matters.
+    """
+    keep = min(keep, int(retention_days))
+    folder = Path(data_dir) / 'backups'
+    folder.mkdir(parents=True, exist_ok=True)
+    if keep:
+        db.backup(folder / f'voicemail-{datetime.now(tz):%Y%m%d}.db')
+    for old in sorted(folder.glob('voicemail-*.db'))[:-keep or None]:
+        old.unlink()
+
+
 class CallRecord:
     """Everything kept about one call: caller audio, transcript, usage, summary, cost.
 

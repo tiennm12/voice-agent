@@ -68,6 +68,14 @@ class Database:
     def close(self):
         self._conn.close()
 
+    def backup(self, path):
+        """A consistent copy of the whole database at `path`, taken while calls keep being written."""
+        copy = sqlite3.connect(str(path))
+        try:
+            self._conn.backup(copy)
+        finally:
+            copy.close()
+
     # --- calls -------------------------------------------------------------
 
     def save_call(self, call):

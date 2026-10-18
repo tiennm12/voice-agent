@@ -6,7 +6,9 @@ from types import SimpleNamespace
 import pytest
 
 from fakes import FakeOpenai
-from voice_agent.call_record import CallRecord, compute_cost, purge_old_calls, summarize_saved_call
+from voice_agent.call_record import (
+    CallRecord, back_up_database, compute_cost, purge_old_calls, summarize_saved_call,
+)
 from voice_agent.db import Database
 
 PRICING = {
@@ -256,6 +258,34 @@ def test_purge_also_removes_old_recordings_that_never_got_a_row(tmp_path, db):
 
     assert not orphan.exists()
     assert recent.exists() and stranger.exists()
+
+
+def test_the_daily_backup_is_a_readable_copy_and_only_the_last_days_are_kept(tmp_path, db):
+    record = make_record(tmp_path, db)
+    record.close()
+    backups = tmp_path / 'backups'
+    backups.mkdir()
+    for day in range(1, 10):  # nine older copies
+        (backups / f'voicemail-202609{day:02d}.db').write_bytes(b'old')
+
+    back_up_database(db, tmp_path, retention_days=30, tz=VIETNAM)
+
+    today = backups / f'voicemail-{datetime.now(VIETNAM):%Y%m%d}.db'
+    copy = Database(today)
+    try:
+        assert copy.get_call(record.id)['session_id'] == 'abc12345'
+    finally:
+        copy.close()
+    assert sorted(path.name for path in backups.iterdir()) == [
+        *(f'voicemail-202609{day:02d}.db' for day in range(4, 10)), today.name,
+    ]
+
+
+def test_a_short_retention_period_shortens_the_backups_too(tmp_path, db):
+    back_up_database(db, tmp_path, retention_days=2, tz=VIETNAM)
+    back_up_database(db, tmp_path, retention_days=0, tz=VIETNAM)  # keep nothing: no copy either
+
+    assert list((tmp_path / 'backups').iterdir()) == []
 
 
 def test_deleted_calls_are_overwritten_in_the_database_file(db):
