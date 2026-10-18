@@ -4,7 +4,9 @@ import pytest
 
 from fakes import REQUIRED_ENV
 from voice_agent.config import load_config
-from voice_agent.settings import clean_setting, effective_settings, normalize_number, pick_greeting
+from voice_agent.settings import (
+    DISCLOSURE, clean_setting, effective_settings, normalize_number, pick_greeting, with_disclosure,
+)
 
 VIETNAM = timezone(timedelta(hours=7))
 CONFIG = load_config(env={**REQUIRED_ENV, 'OWNER_NAME': 'anh Tuấn'}, read_system_doc=lambda: 'doc')
@@ -23,13 +25,13 @@ def test_defaults_fill_every_setting_a_call_needs():
 
     assert settings == {
         'owner_name': 'anh Tuấn',
-        'greeting': 'Chào bạn, anh Tuấn hiện không thể nghe máy. Mình là trợ lý AI, bạn cần nhắn gì không ạ?',
+        'greeting': 'Chào bạn, anh Tuấn hiện không thể nghe máy. Mình là trợ lý AI, cuộc gọi này được ghi âm để chuyển lời nhắn. Bạn cần nhắn gì không ạ?',
         'system_doc': 'doc',
         'blocked_numbers': [],
         'status': 'normal',
-        'meeting_greeting': 'Chào bạn, anh Tuấn đang họp nên chưa nghe máy được. Mình là trợ lý AI, bạn cần nhắn gì không ạ?',
+        'meeting_greeting': 'Chào bạn, anh Tuấn đang họp nên chưa nghe máy được. Mình là trợ lý AI, cuộc gọi này được ghi âm để chuyển lời nhắn. Bạn cần nhắn gì không ạ?',
         'work_hours': None,
-        'after_hours_greeting': 'Chào bạn, hiện đã ngoài giờ làm việc của anh Tuấn. Mình là trợ lý AI, bạn để lại lời nhắn nhé.',
+        'after_hours_greeting': 'Chào bạn, hiện đã ngoài giờ làm việc của anh Tuấn. Mình là trợ lý AI, cuộc gọi này được ghi âm để chuyển lời nhắn. Bạn để lại lời nhắn nhé.',
         'voice_id': 'v1',
         'language': 'vi',
     }
@@ -71,6 +73,25 @@ def test_in_a_meeting_wins_over_the_schedule():
 
     assert pick_greeting(settings, at(MONDAY, '10:00')) == settings['meeting_greeting']
     assert pick_greeting(settings, at(SATURDAY, '23:00')) == settings['meeting_greeting']
+
+
+@pytest.mark.parametrize('key', ['greeting', 'meeting_greeting', 'after_hours_greeting'])
+def test_a_greeting_that_hides_the_ai_or_the_recording_gets_the_disclosure_in_front(key):
+    stored = {key: 'Alo, Lan nghe.', 'status': 'meeting' if key == 'meeting_greeting' else 'normal'}
+    if key == 'after_hours_greeting':
+        stored['work_hours'] = OFFICE_HOURS
+    settings = effective_settings(CONFIG, stored)
+
+    assert pick_greeting(settings, at(SATURDAY, '10:00')) == f'{DISCLOSURE} Alo, Lan nghe.'
+
+
+def test_a_greeting_that_already_says_both_is_spoken_as_written():
+    own = 'Alo, đây là trợ lý AI của Lan, cuộc gọi được ghi âm. Bạn nhắn gì ạ?'
+    settings = effective_settings(CONFIG, {'greeting': own})
+
+    assert pick_greeting(settings, at(MONDAY, '10:00')) == own
+    # "AI" must be the word, not letters inside another one.
+    assert with_disclosure('Alo, MAI đây, cuộc gọi được ghi âm.').startswith(DISCLOSURE)
 
 
 # --- validation --------------------------------------------------------------

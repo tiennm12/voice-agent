@@ -35,7 +35,9 @@ before the dashboard were served without cache headers.
 - **Cài đặt** — owner name, greeting, the assistant's instructions, a
   "in a meeting" status, working hours with their own greeting, the agent's
   voice (and creating one from your own recordings), language, blocked numbers.
-  Changes apply from the next call.
+  Changes apply from the next call. A greeting that does not say "AI" and "ghi âm"
+  is spoken after "Mình là trợ lý AI, cuộc gọi này được ghi âm để chuyển lời nhắn."
+  (Vietnam's AI Law 134/2025 and Personal Data Protection Law 91/2025).
 
 Listing or cloning voices needs an ElevenLabs API key with the `voices_read` /
 `voices_write` permissions; a text-to-speech-only key still works for calls.

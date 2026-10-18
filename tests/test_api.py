@@ -6,7 +6,7 @@ from aiohttp import FormData
 from fakes import FakeHttp, FakeUpstream, start_app
 from voice_agent.server import DB
 
-DEFAULT_GREETING = 'Chào bạn, chủ máy hiện không thể nghe máy. Mình là trợ lý AI, bạn cần nhắn gì không ạ?'
+DEFAULT_GREETING = 'Chào bạn, chủ máy hiện không thể nghe máy. Mình là trợ lý AI, cuộc gọi này được ghi âm để chuyển lời nhắn. Bạn cần nhắn gì không ạ?'
 
 
 @pytest.fixture
@@ -185,7 +185,7 @@ async def test_a_working_schedule_round_trips_through_the_api(client):
 async def test_the_default_greeting_follows_the_owner_name(client):
     settings = await (await client.put('/api/settings', json={'owner_name': 'chị Lan'})).json()
 
-    assert settings['greeting'] == 'Chào bạn, chị Lan hiện không thể nghe máy. Mình là trợ lý AI, bạn cần nhắn gì không ạ?'
+    assert settings['greeting'] == 'Chào bạn, chị Lan hiện không thể nghe máy. Mình là trợ lý AI, cuộc gọi này được ghi âm để chuyển lời nhắn. Bạn cần nhắn gì không ạ?'
 
 
 @pytest.mark.parametrize('body', [
@@ -210,7 +210,11 @@ async def test_the_next_call_uses_the_saved_greeting_and_persona(tmp_path):
 
         ws = await client.ws_connect('/ws')
         greeting_tts = await upstream.tts_socket(0)
-        assert greeting_tts.sent[1:3] == [{'text': 'Alo, '}, {'text': 'Lan đang bận. '}]
+        # The owner's own words say neither "AI" nor "ghi âm": the disclosure goes first.
+        assert greeting_tts.sent[1:5] == [
+            {'text': 'Mình là trợ lý AI, '}, {'text': 'cuộc gọi này được ghi âm để chuyển lời nhắn. '},
+            {'text': 'Alo, '}, {'text': 'Lan đang bận. '},
+        ]
 
         greeting_tts.feed({'isFinal': True})
         upstream.stt.feed({'type': 'conversation.item.input_audio_transcription.completed', 'transcript': 'Alo'})
@@ -276,7 +280,7 @@ async def test_while_in_a_meeting_callers_hear_the_meeting_greeting(tmp_path):
         ws = await client.ws_connect('/ws')
         greeting_tts = await upstream.tts_socket(0)
 
-        assert greeting_tts.sent[1] == {'text': 'Sếp đang họp. '}
+        assert greeting_tts.sent[3] == {'text': 'Sếp đang họp. '}
         await ws.close()
     finally:
         await client.close()

@@ -18,6 +18,9 @@ VOICE_ID = re.compile(r'[A-Za-z0-9]{1,64}')
 CLOCK = re.compile(r'([01]\d|2[0-3]):[0-5]\d')
 MAX_BLOCKED_NUMBERS = 500
 MAX_NUMBER_DIGITS = 20
+# Every caller hears this, or what it says, first: the AI Law (134/2025/QH15, art. 11) requires telling
+# people they are talking to an AI, the Personal Data Protection Law (91/2025/QH15) that they are recorded.
+DISCLOSURE = 'Mình là trợ lý AI, cuộc gọi này được ghi âm để chuyển lời nhắn.'
 
 
 def effective_settings(config, stored):
@@ -26,30 +29,37 @@ def effective_settings(config, stored):
     return {
         'owner_name': owner,
         'greeting': stored.get('greeting')
-        or f'Chào bạn, {owner} hiện không thể nghe máy. Mình là trợ lý AI, bạn cần nhắn gì không ạ?',
+        or f'Chào bạn, {owner} hiện không thể nghe máy. {DISCLOSURE} Bạn cần nhắn gì không ạ?',
         'system_doc': stored.get('system_doc') or config.system_doc,
         'blocked_numbers': stored.get('blocked_numbers') or [],
         'status': stored.get('status') or CHOICES['status'][0],
         'meeting_greeting': stored.get('meeting_greeting')
-        or f'Chào bạn, {owner} đang họp nên chưa nghe máy được. Mình là trợ lý AI, bạn cần nhắn gì không ạ?',
+        or f'Chào bạn, {owner} đang họp nên chưa nghe máy được. {DISCLOSURE} Bạn cần nhắn gì không ạ?',
         # {'days': [1..7, Monday = 1], 'from': 'HH:MM', 'to': 'HH:MM'}, or None for "no schedule".
         'work_hours': stored.get('work_hours'),
         'after_hours_greeting': stored.get('after_hours_greeting')
-        or f'Chào bạn, hiện đã ngoài giờ làm việc của {owner}. Mình là trợ lý AI, bạn để lại lời nhắn nhé.',
+        or f'Chào bạn, hiện đã ngoài giờ làm việc của {owner}. {DISCLOSURE} Bạn để lại lời nhắn nhé.',
         'voice_id': stored.get('voice_id') or config.elevenlabs_voice_id,
         'language': stored.get('language') or CHOICES['language'][0],
     }
 
 
 def pick_greeting(settings, now):
-    """The greeting for a call arriving at `now` (already in the owner's time zone)."""
+    """The greeting for a call arriving at `now` (already in the owner's time zone), disclosure included."""
     if settings['status'] == 'meeting':
-        return settings['meeting_greeting']
+        return with_disclosure(settings['meeting_greeting'])
     hours = settings['work_hours']
     # Zero-padded HH:MM strings compare like times.
     if hours and not (now.isoweekday() in hours['days'] and hours['from'] <= f'{now:%H:%M}' < hours['to']):
-        return settings['after_hours_greeting']
-    return settings['greeting']
+        return with_disclosure(settings['after_hours_greeting'])
+    return with_disclosure(settings['greeting'])
+
+
+def with_disclosure(greeting):
+    """The greeting as spoken: one the owner wrote without saying "AI" and "ghi âm" gets DISCLOSURE in front."""
+    if re.search(r'\bAI\b', greeting) and 'ghi âm' in greeting.lower():
+        return greeting
+    return f'{DISCLOSURE} {greeting}'
 
 
 def normalize_number(text):

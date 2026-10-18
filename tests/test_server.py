@@ -11,7 +11,7 @@ from fakes import PASSWORD, FakeHttp, FakeUpstream, start_app
 from voice_agent import auth
 from voice_agent.server import DB
 
-GREETING = 'Chào bạn, chủ máy hiện không thể nghe máy. Mình là trợ lý AI, bạn cần nhắn gì không ạ?'
+GREETING = 'Chào bạn, chủ máy hiện không thể nghe máy. Mình là trợ lý AI, cuộc gọi này được ghi âm để chuyển lời nhắn. Bạn cần nhắn gì không ạ?'
 
 
 @pytest.fixture(autouse=True)
