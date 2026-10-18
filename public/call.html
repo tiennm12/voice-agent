@@ -35,6 +35,7 @@
             <option value="realtime">realtime: một model nghe và nói (giọng OpenAI)</option>
             <option value="hybrid">hybrid: model realtime nghe, trả lời bằng chữ → ElevenLabs đọc</option>
             <option value="live">live: GPT-Live, vừa nghe vừa nói (giọng OpenAI)</option>
+            <option value="blind">nghe mù: máy chọn ngẫu nhiên, chỉ báo là pipeline nào khi cuộc gọi kết thúc</option>
           </select>
         </label>
         <label>
@@ -203,11 +204,28 @@
         return options;
       }
       // client.js reads window.callOptions when the call starts; the capture listener runs before its own click handler.
+      // Blind listening test: the pipeline is drawn at random and named only once the call is over,
+      // together with its waits (client.js holds the latency lines back meanwhile: they would give it away).
+      const PIPELINES = ['classic', 'hybrid', 'realtime', 'live'];
       document.getElementById('startButton').addEventListener('click', () => {
-        window.callOptions = currentOptions();
-        const chosen = Object.entries(window.callOptions).map(([k, v]) => `${k}=${v}`).join(', ');
-        appendTranscript('cài đặt', chosen || 'mặc định');
+        const options = currentOptions();
+        window.blindTest = null;
+        if (options.pipeline === 'blind') {
+          options.pipeline = PIPELINES[Math.floor(Math.random() * PIPELINES.length)];
+          window.blindTest = { pipeline: options.pipeline, waits: [] };
+        }
+        window.callOptions = options;
+        const chosen = Object.entries(options).map(([k, v]) => `${k}=${v}`).join(', ');
+        appendTranscript('cài đặt', window.blindTest ? 'nghe mù' : chosen || 'mặc định');
       }, true);
+      new MutationObserver(() => {
+        const test = window.blindTest;
+        if (!test || document.getElementById('status').textContent !== 'idle') return;
+        window.blindTest = null;
+        const waits = test.waits.slice().sort((a, b) => a - b);
+        const median = waits.length ? `, chờ trung vị ${waits[Math.floor(waits.length / 2)]}ms qua ${waits.length} lượt` : '';
+        appendTranscript('nghe mù', `pipeline vừa rồi là ${test.pipeline}${median}`);
+      }).observe(document.getElementById('status'), { childList: true, characterData: true, subtree: true });
     </script>
     <script src="pcm-player.js"></script>
     <script src="client.js"></script>

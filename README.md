@@ -183,7 +183,9 @@ pauses, choppier speech, a weaker model) that should be judged by ear.
 `/call.html` has a "Cài đặt thử" panel: pipeline, speech-to-text service (OpenAI, ElevenLabs
 Scribe or Soniox), silence before a turn ends, VAD threshold, chat model, TTS model and auto
 mode. They apply to that one call and are remembered in the browser; blank means the
-server's default. Each reply shows its wait split into stt / llm / tts. `scripts/probe.py
+server's default. Each reply shows its wait split into stt / llm / tts. Pipeline "nghe mù" draws one
+of the four at random and names it, with the median wait, only once the call is over: for picking the
+default by ear without knowing which one is talking. `scripts/probe.py
 ... --query 'stt_provider=elevenlabs'` does the same from the command line, and
 `scripts/stt_bench.py` compares the two speech-to-text services on synthesized Vietnamese.
 First numbers: end of speech to final transcript, median over 5 sentences — OpenAI

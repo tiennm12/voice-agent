@@ -169,7 +169,9 @@ function handleServerMessage(event) {
     if (msg.type === 'transcript') appendTranscript(msg.role || 'user', msg.text);
     if (msg.type === 'state') setStatus(msg.state);
     if (msg.type === 'error') appendTranscript('error', msg.message);
-    if (msg.type === 'latency') {
+    if (msg.type === 'latency' && window.blindTest) {
+      window.blindTest.waits.push(msg.response_ms); // call.html names the pipeline, and these, after the call
+    } else if (msg.type === 'latency') {
       // Each pipeline reports the steps it has: classic stt/llm/tts, hybrid llm/tts, realtime none.
       const steps = ['stt', 'llm', 'tts'].filter((step) => msg[`${step}_ms`] !== undefined);
       const split = steps.length ? ` (${steps.map((step) => `${step} ${msg[`${step}_ms`]}`).join(' · ')})` : '';
