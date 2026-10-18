@@ -17,8 +17,9 @@ CALL_LINK_LIFETIME = 7 * 24 * 3600
 PUBLIC_PATHS = {'/login', '/app.css', '/call-view.js'}
 # All a call link's token opens: that one call's page and its own API routes.
 CALL_LINK_PATH = re.compile(r'/c/(?P<page_id>[^/]+)|/api/calls/(?P<api_id>[^/]+)(/audio|/read)?')
-# Seconds a wrong password costs: a cheap brake on guessing.
-# ponytail: no lockout or per-IP limit. Add one if this is ever exposed without a long random password.
+# Seconds a wrong password costs, served one at a time across all clients: at most one guess per second.
+# ponytail: one global queue, so a guesser also slows the owner's own typos (never the right password).
+# Per-IP limits if that ever bites.
 LOGIN_FAILURE_DELAY = 1.0
 
 
@@ -93,6 +94,7 @@ def _same_origin(request):
 def setup_auth(app, password, secret, login_page):
     """Puts everything behind one password: pages redirect to /login, the API and /ws answer 401."""
     session = session_subject(password)
+    failures = asyncio.Lock()  # parallel wrong guesses would otherwise each wait their second side by side
 
     @web.middleware
     async def require_session(request, handler):
@@ -116,7 +118,8 @@ def setup_auth(app, password, secret, login_page):
     async def login(request):
         form = await request.post()
         if not hmac.compare_digest(str(form.get('password', '')).encode(), password.encode()):
-            await asyncio.sleep(LOGIN_FAILURE_DELAY)
+            async with failures:
+                await asyncio.sleep(LOGIN_FAILURE_DELAY)
             raise web.HTTPFound('/login?error=1')
         response = web.HTTPFound('/')
         response.set_cookie(

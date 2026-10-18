@@ -85,6 +85,21 @@ async def test_a_wrong_password_gets_no_session(anonymous):
     assert (await anonymous.get('/', allow_redirects=False)).status == 302
 
 
+async def test_wrong_passwords_sent_in_parallel_are_slowed_down_one_after_another(anonymous, monkeypatch):
+    monkeypatch.setattr(auth, 'LOGIN_FAILURE_DELAY', 0.1)
+    loop = asyncio.get_running_loop()
+
+    started = loop.time()
+    await asyncio.gather(*(
+        anonymous.post('/login', data={'password': f'guess {n}'}, allow_redirects=False) for n in range(4)
+    ))
+    assert loop.time() - started >= 3 * 0.1  # side by side they would take 0.1; slack for the clock's resolution
+
+    started = loop.time()
+    response = await anonymous.post('/login', data={'password': PASSWORD}, allow_redirects=False)
+    assert response.cookies['session'] and loop.time() - started < 0.1, 'the right password never waits'
+
+
 async def test_the_right_password_opens_a_session_in_a_hardened_cookie(anonymous):
     response = await anonymous.post('/login', data={'password': PASSWORD}, allow_redirects=False)
 
