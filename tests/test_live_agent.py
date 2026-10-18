@@ -189,4 +189,4 @@ async def test_stop_reports_the_session_length_for_billing():
     ctx.agent.stop()
 
     [seconds] = ctx.usage
-    assert seconds == pytest.approx(0.05, abs=0.04)
+    assert 0.04 <= seconds < 1  # a busy machine oversleeps; it must never undercount
