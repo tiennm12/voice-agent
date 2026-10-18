@@ -1,5 +1,7 @@
-aiohttp~=3.14
-openai~=3.29
-python-dotenv~=1.2
-pytest~=9.1
-pytest-asyncio~=1.4
+# Exact versions, so a redeploy installs what the tests ran against. Upgrade on purpose, then rerun them.
+# aiohttp must stay >= 3.14.3: the 2026 CVEs (CVE-2026-47265, -50269, -69244 and others) are fixed by then.
+aiohttp==3.14.5
+openai==3.29.0
+python-dotenv==1.2.4
+pytest==9.1.1
+pytest-asyncio==1.4.0
