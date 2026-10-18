@@ -26,6 +26,13 @@ NORMAL, SPAM = 'bình thường', 'spam'
 NO_MESSAGE = {
     'caller_name': 'Không rõ', 'summary': 'Người gọi không để lại lời nhắn.', 'urgency': 'thấp', 'category': NORMAL,
 }
+# A call that broke before the caller said anything: "no message" would hide that nobody could hear them.
+SYSTEM_FAILURE = {
+    'caller_name': 'Không rõ',
+    'summary': 'Hệ thống gặp lỗi nên chưa nghe được người gọi. Hãy gọi lại số này.',
+    'urgency': 'trung bình',
+    'category': NORMAL,
+}
 # Structured output: the model can only answer with these four keys and these labels.
 SUMMARY_FORMAT = {
     'type': 'json_schema',
@@ -79,14 +86,14 @@ def count_llm_usage(usage_counter, usage):
     usage_counter['llm_output_tokens'] += usage.completion_tokens
 
 
-async def summarize_transcript(openai_client, transcript, session_id=''):
+async def summarize_transcript(openai_client, transcript, session_id='', failed=False):
     """(summary, usage) for a transcript as CallRecord keeps it; usage is None when nothing was billed.
 
-    Never raises: a failed summary falls back to the caller's own words.
+    `failed`: the call hit a system error. Never raises: a failed summary falls back to the caller's own words.
     """
     caller_lines = [turn['text'] for turn in transcript if turn['role'] == 'user' and turn['text'].strip()]
     if not caller_lines:
-        return NO_MESSAGE, None
+        return (SYSTEM_FAILURE if failed else NO_MESSAGE), None
     dialogue = '\n'.join(f"{'Người gọi' if turn['role'] == 'user' else 'Trợ lý'}: {turn['text']}" for turn in transcript)
     usage = None
     try:
@@ -151,6 +158,7 @@ class CallRecord:
         self.summary = None
         self.usage = Counter()
         self.cost = None
+        self.failed = False  # a system error reached the caller's side of the call
 
         # ponytail: synchronous disk writes on the event loop (a few KB per second per
         # call). Move to a thread if many concurrent calls ever share one process.
@@ -216,7 +224,7 @@ class CallRecord:
 
     async def summarize(self, openai_client):
         """Fills in summary and cost, and saves. Never raises: a failed summary falls back to the caller's words."""
-        self.summary, usage = await summarize_transcript(openai_client, self.transcript, self.session_id)
+        self.summary, usage = await summarize_transcript(openai_client, self.transcript, self.session_id, self.failed)
         if usage:
             self.add_llm_usage(usage)
         self.cost = compute_cost(self.usage, self._pricing)

@@ -215,9 +215,33 @@ async def test_a_call_that_cannot_reach_stt_tells_the_browser_closes_and_is_stil
         assert frames == [{'type': 'error', 'message': 'Không thể kết nối tới dịch vụ giọng nói.'}]
 
         call = await saved_call(client, lambda call: call['summary'])
-        assert 'không để lại lời nhắn' in call['summary']
+        # Not "no message": nobody could hear the caller, and the owner must know to call back.
+        assert 'Hệ thống gặp lỗi' in call['summary']
+        assert call['urgency'] == 'trung bình'
     finally:
         await client.close()
+
+
+async def test_a_call_whose_stt_drops_before_the_caller_speaks_is_filed_as_a_system_failure(served):
+    client, upstream = served
+    ws = await client.ws_connect('/ws')
+    await upstream.tts_socket()
+
+    upstream.stt.drop()
+    await receive_until(ws, lambda f: False)  # the agent hangs up
+
+    call = await saved_call(client, lambda call: call['summary'])
+    assert 'Hệ thống gặp lỗi' in call['summary']
+
+
+async def test_a_caller_who_stays_silent_still_leaves_no_message(served):
+    client, upstream = served
+    ws = await client.ws_connect('/ws')
+    await upstream.tts_socket()
+    await ws.close()
+
+    call = await saved_call(client, lambda call: call['summary'])
+    assert call['summary'] == 'Người gọi không để lại lời nhắn.'
 
 
 async def test_a_full_voicemail_call_hangs_up_after_the_goodbye_and_is_saved_with_summary_and_cost(tmp_path):

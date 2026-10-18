@@ -117,6 +117,8 @@ def create_app(config, *, ws_connect=None, openai_client=None, http=None):
         def send_control(message):
             if message['type'] == 'transcript':
                 record.add_transcript(message['role'], message['text'])
+            elif message['type'] == 'error':
+                record.failed = True
             outbox.put_nowait(message)
 
         # The test page (call.html) may change the pipeline for this one call.
@@ -138,6 +140,7 @@ def create_app(config, *, ws_connect=None, openai_client=None, http=None):
                 await orchestrator.start()
             except Exception:
                 log.exception('[%s] [server] failed to start session', session_id)
+                record.failed = True
                 with contextlib.suppress(ConnectionError):
                     await browser_ws.send_str(json.dumps(
                         {'type': 'error', 'message': 'Không thể kết nối tới dịch vụ giọng nói.'}, ensure_ascii=False,
