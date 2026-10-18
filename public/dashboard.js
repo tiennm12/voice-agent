@@ -100,7 +100,7 @@ async function openCall(id) {
     unread.addEventListener('click', () => setRead(id, false));
     actions.append(unread);
     if (call.caller) actions.append(blockButton(call.caller));
-    view.querySelector('audio').after(actions);
+    view.querySelector('dl').after(actions);
     if (!call.read) await setRead(id, true);
   } catch (err) {
     detail.replaceChildren(element('p', 'status error', `Không mở được cuộc gọi: ${err.message}`));

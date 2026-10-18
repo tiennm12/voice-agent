@@ -47,12 +47,14 @@ function renderCall(container, call, audioUrl) {
   }
   view.append(facts);
 
-  const audio = element('audio');
-  audio.controls = true;
-  audio.preload = 'none';
-  audio.src = audioUrl;
-  audio.setAttribute('aria-label', 'Ghi âm giọng người gọi');
-  view.append(audio);
+  if ((call.recordings || []).includes('caller')) {
+    const audio = element('audio');
+    audio.controls = true;
+    audio.preload = 'none';
+    audio.src = audioUrl;
+    audio.setAttribute('aria-label', 'Ghi âm giọng người gọi');
+    view.append(audio);
+  }
 
   const transcript = element('ol', 'transcript');
   for (const turn of call.transcript || []) {

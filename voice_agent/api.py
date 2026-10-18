@@ -37,6 +37,14 @@ def refusal(status, body):
     return str(reason or status or 'không kết nối được')[:300]
 
 
+def _has_sound(path):
+    """A recording with something in it: more than the 44-byte header a WAV file starts with."""
+    try:
+        return path.stat().st_size > 44
+    except OSError:
+        return False
+
+
 def setup_api(app, db, config, public_dir, upstream):
     """The dashboard's JSON API. Every route sits behind the session middleware.
 
@@ -78,7 +86,11 @@ def setup_api(app, db, config, public_dir, upstream):
         return json_response({'calls': calls})
 
     async def get_call(request):
-        return json_response(call_or_404(request))
+        call = call_or_404(request)
+        # Which players the page should show: a blocked attempt, or a call cut off at once, has no recording.
+        folder = config.data_dir / 'calls' / call['id']
+        call['recordings'] = [who for who, name in (('caller', 'caller.wav'),) if _has_sound(folder / name)]
+        return json_response(call)
 
     async def mark_read(request):
         call = call_or_404(request)

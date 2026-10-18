@@ -254,6 +254,22 @@ async def test_a_blocked_caller_is_turned_away_and_the_attempt_is_filed_as_read_
     [row] = client.app[DB].list_calls()
     assert (row['caller'], row['category'], row['read']) == ('0901234567', 'spam', True)
     assert 'chặn' in row['summary']
+    # Never picked up, so nothing to play: the page shows no player.
+    assert (await (await client.get(f"/api/calls/{row['id']}")).json())['recordings'] == []
+
+
+async def test_a_call_lists_the_recordings_it_has_sound_in(client, tmp_path):
+    call_id = '20261013T090000_bbbbbbbb'
+    client.app[DB].save_call({
+        'id': call_id, 'session_id': 'bbbbbbbb', 'started_at': '2026-10-13T09:00:00+07:00', 'transcript': [], 'usage': {},
+    })
+    folder = tmp_path / 'calls' / call_id
+    folder.mkdir(parents=True)
+    (folder / 'caller.wav').write_bytes(b'R' * 44)  # header only: the call ended before any audio arrived
+    assert (await (await client.get(f'/api/calls/{call_id}')).json())['recordings'] == []
+
+    (folder / 'caller.wav').write_bytes(b'R' * 100)
+    assert (await (await client.get(f'/api/calls/{call_id}')).json())['recordings'] == ['caller']
 
 
 async def test_other_callers_are_let_through_and_leave_no_trace(client):
