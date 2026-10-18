@@ -23,6 +23,7 @@ SUMMARY_PROMPT = (
     'và không suy diễn. Chỉ chọn urgency "cao" khi người gọi nói rõ ràng việc khẩn cấp.'
 )
 NORMAL, SPAM = 'bình thường', 'spam'
+CALL_FOLDER = re.compile(r'\d{8}T\d{6}_')  # how a call's id, and so its folder's name, starts
 NO_MESSAGE = {
     'caller_name': 'Không rõ', 'summary': 'Người gọi không để lại lời nhắn.', 'urgency': 'thấp', 'category': NORMAL,
 }
@@ -133,6 +134,12 @@ def purge_old_calls(db, data_dir, retention_days, tz):
     for call_id in purged:
         if Path(call_id).name == call_id and call_id not in ('.', '..'):  # an id is one path segment, never a path
             shutil.rmtree(Path(data_dir) / 'calls' / call_id, ignore_errors=True)
+    # Also by folder name, which starts with the call's start time: a process killed mid-call (out of
+    # memory, SIGKILL) leaves a recording with no row, and it must not outlive the retention period either.
+    oldest_kept = f'{cutoff:%Y%m%dT%H%M%S}'
+    for folder in (Path(data_dir) / 'calls').glob('*'):
+        if folder.is_dir() and CALL_FOLDER.match(folder.name) and folder.name[:15] < oldest_kept:
+            shutil.rmtree(folder, ignore_errors=True)
     return purged
 
 

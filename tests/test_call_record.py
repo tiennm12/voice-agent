@@ -240,3 +240,23 @@ def test_purge_removes_the_row_and_the_recording_of_calls_past_retention(tmp_pat
     assert purged == [old.id]
     assert db.get_call(old.id) is None and not old.dir.exists()
     assert db.get_call(recent.id) is not None and (recent.dir / 'caller.wav').exists()
+
+
+def test_purge_also_removes_old_recordings_that_never_got_a_row(tmp_path, db):
+    # What a process killed mid-call leaves behind: a folder, no database row.
+    calls = tmp_path / 'calls'
+    orphan = calls / f'{datetime.now(VIETNAM) - timedelta(days=40):%Y%m%dT%H%M%S}_dead0000'
+    recent = calls / f'{datetime.now(VIETNAM) - timedelta(days=1):%Y%m%dT%H%M%S}_live0000'
+    stranger = calls / 'notes'  # not a call's folder: never touched
+    for folder in (orphan, recent, stranger):
+        folder.mkdir(parents=True)
+        (folder / 'caller.wav').write_bytes(b'RIFF')
+
+    purge_old_calls(db, tmp_path, retention_days=30, tz=VIETNAM)
+
+    assert not orphan.exists()
+    assert recent.exists() and stranger.exists()
+
+
+def test_deleted_calls_are_overwritten_in_the_database_file(db):
+    assert db._conn.execute('PRAGMA secure_delete').fetchone()[0] == 1

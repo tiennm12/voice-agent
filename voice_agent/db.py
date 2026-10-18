@@ -61,6 +61,8 @@ class Database:
         self._conn = sqlite3.connect(str(path))
         self._conn.row_factory = sqlite3.Row
         self._conn.execute('PRAGMA journal_mode=WAL')
+        # A purged call is overwritten, not just unlinked from the b-tree: retention must mean gone from the file.
+        self._conn.execute('PRAGMA secure_delete=ON')
         self._conn.executescript(SCHEMA)
 
     def close(self):
