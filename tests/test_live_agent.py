@@ -2,8 +2,6 @@ import asyncio
 import base64
 from types import SimpleNamespace
 
-import pytest
-
 from fakes import FakeWs, fake_ws_connect, tick
 from voice_agent.live_agent import LiveAgent
 
