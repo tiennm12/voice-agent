@@ -174,6 +174,16 @@ async def test_browsers_must_revalidate_pages_and_never_store_api_answers(served
     assert redirect.headers['Cache-Control'] == 'no-cache'
 
 
+async def test_every_answer_forbids_framing_sniffing_and_referers(served, anonymous):
+    client, _ = served
+
+    for response in (await client.get('/'), await client.get('/api/calls'), await anonymous.get('/', allow_redirects=False)):
+        assert response.headers['Content-Security-Policy'] == "frame-ancestors 'none'"
+        assert response.headers['X-Frame-Options'] == 'DENY'
+        assert response.headers['X-Content-Type-Options'] == 'nosniff'
+        assert response.headers['Referrer-Policy'] == 'no-referrer'
+
+
 async def test_does_not_serve_files_outside_public(served):
     client, _ = served
 

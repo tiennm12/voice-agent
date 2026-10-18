@@ -38,6 +38,16 @@ PURGE_INTERVAL = 24 * 3600
 # WebSocket handshake and the OpenAI client 10 minutes (with two retries) for an answer.
 CONNECT_TIMEOUT = 5
 OPENAI_TIMEOUT = 10
+# On every response. No page may be framed (clickjacking the settings), no file sniffed into another type,
+# and no address, call links' tokens included, handed on as a Referer.
+# ponytail: no script-src policy yet, the pages still have inline scripts. HSTS belongs to the TLS
+# front of the shared host, not to one app behind it.
+SECURITY_HEADERS = {
+    'Content-Security-Policy': "frame-ancestors 'none'",
+    'X-Frame-Options': 'DENY',
+    'X-Content-Type-Options': 'nosniff',
+    'Referrer-Policy': 'no-referrer',
+}
 
 
 def create_app(config, *, ws_connect=None, openai_client=None, http=None):
@@ -178,15 +188,16 @@ def create_app(config, *, ws_connect=None, openai_client=None, http=None):
             await upstream['notifier'].notify_call(db.get_call(record.id))
         return browser_ws
 
-    async def forbid_stale_copies(request, response):
+    async def harden(request, response):
         # With no Cache-Control a browser caches pages and scripts on a guess, and keeps
         # showing them after a deploy or a logout. API answers hold call data: never stored.
         response.headers.setdefault('Cache-Control', 'no-store' if request.path.startswith('/api/') else 'no-cache')
+        response.headers.update(SECURITY_HEADERS)
 
     app = web.Application()
     app[DB] = db
     app.cleanup_ctx.append(lifetime)
-    app.on_response_prepare.append(forbid_stale_copies)
+    app.on_response_prepare.append(harden)
     setup_auth(app, config.dashboard_password, secret, PUBLIC_DIR / 'login.html')
     setup_api(app, db, config, PUBLIC_DIR, upstream)
     app.router.add_get('/', index)
