@@ -143,6 +143,15 @@ def purge_old_calls(db, data_dir, retention_days, tz):
     return purged
 
 
+def _pcm_wav(path):
+    """A WAV file for the 16-bit mono 24 kHz PCM that both sides of a call use."""
+    wav = wave.open(str(path), 'wb')
+    wav.setnchannels(1)
+    wav.setsampwidth(2)
+    wav.setframerate(24000)
+    return wav
+
+
 def back_up_database(db, data_dir, retention_days, tz, keep=7):
     """Today's copy of the database in <data_dir>/backups, keeping the last `keep` days' copies.
 
@@ -185,13 +194,25 @@ class CallRecord:
 
         # ponytail: synchronous disk writes on the event loop (a few KB per second per
         # call). Move to a thread if many concurrent calls ever share one process.
-        self._wav = wave.open(str(self.dir / 'caller.wav'), 'wb')
-        self._wav.setnchannels(1)
-        self._wav.setsampwidth(2)
-        self._wav.setframerate(24000)
+        self._wav = _pcm_wav(self.dir / 'caller.wav')
+        self._agent = None  # the agent's side, once open_agent_audio() has said in which format
 
     def write_audio(self, data):
         self._wav.writeframesraw(data)
+
+    def open_agent_audio(self, audio_format):
+        """Records the agent's side too: 'pcm' (as sent to the bridge and by realtime/live) into agent.wav,
+        'mp3' (the mic page's) into agent.mp3. It is what was sent, speech cut off by the caller included."""
+        if audio_format == 'pcm':
+            self._agent = _pcm_wav(self.dir / 'agent.wav')
+            self._write_agent = self._agent.writeframesraw
+        else:
+            self._agent = open(self.dir / 'agent.mp3', 'wb')  # MP3 frames simply concatenate
+            self._write_agent = self._agent.write
+
+    def write_agent_audio(self, data):
+        if self._agent:
+            self._write_agent(data)
 
     def add_transcript(self, role, text):
         self.transcript.append({'role': role, 'text': text, 'at': datetime.now(self._tz).isoformat()})
@@ -243,6 +264,8 @@ class CallRecord:
         """Ends the record and saves it. Synchronous on purpose: runs even when the call is torn down by cancellation."""
         self.ended_at = datetime.now(self._tz)
         self._wav.close()
+        if self._agent:
+            self._agent.close()
         self._save()
 
     async def summarize(self, openai_client):

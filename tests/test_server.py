@@ -216,6 +216,34 @@ async def test_a_call_speaks_the_fixed_greeting_and_relays_control_and_audio_in_
     await ws.close()
 
 
+async def test_what_the_agent_sends_is_recorded_in_the_format_it_was_sent(served, tmp_path):
+    client, upstream = served
+    ws = await client.ws_connect('/ws')  # the mic page: MP3
+    tts = await upstream.tts_socket()
+    tts.feed({'audio': base64.b64encode(b'mp3-bytes').decode()})
+    await receive_until(ws, lambda f: f == b'mp3-bytes')
+    await ws.close()
+
+    call = await saved_call(client, lambda call: call['summary'])
+    assert (tmp_path / 'calls' / call['id'] / 'agent.mp3').read_bytes() == b'mp3-bytes'
+    agent = await client.get(f"/api/calls/{call['id']}/agent-audio")
+    assert agent.headers['Content-Type'] == 'audio/mpeg' and await agent.read() == b'mp3-bytes'
+
+
+async def test_the_bridges_pcm_agent_audio_is_kept_as_wav(served, tmp_path):
+    client, upstream = served
+    ws = await client.ws_connect('/ws?audio=pcm')
+    tts = await upstream.tts_socket()
+    tts.feed({'audio': base64.b64encode(bytes([1, 0, 2, 0])).decode()})
+    await receive_until(ws, lambda f: f == bytes([1, 0, 2, 0]))
+    await ws.close()
+
+    call = await saved_call(client, lambda call: call['summary'])
+    with wave.open(str(tmp_path / 'calls' / call['id'] / 'agent.wav'), 'rb') as wav:
+        assert (wav.getframerate(), wav.readframes(wav.getnframes())) == (24000, bytes([1, 0, 2, 0]))
+    assert (await (await client.get(f"/api/calls/{call['id']}")).json())['recordings'] == ['agent']
+
+
 async def test_mic_audio_from_the_browser_is_forwarded_to_stt(served):
     client, upstream = served
     ws = await client.ws_connect('/ws')
@@ -517,6 +545,8 @@ async def test_a_call_link_opens_that_call_without_a_session(anonymous, tmp_path
     assert (await call.json())['summary'] == 'Nhờ gọi lại.'
     audio = await anonymous.get(f'/api/calls/{CALL_ID}/audio', params=query)
     assert await audio.read() == b'RIFFdata'
+    agent = await anonymous.get(f'/api/calls/{CALL_ID}/agent-audio', params=query)
+    assert agent.status == 404, 'let through by the link; this call just has no agent recording'
 
     marked = await anonymous.post(f'/api/calls/{CALL_ID}/read', params=query, json={'read': True})
     assert marked.status == 200

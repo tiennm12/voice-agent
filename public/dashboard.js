@@ -94,7 +94,7 @@ async function openCall(id) {
   const detail = document.getElementById('callDetail');
   try {
     const call = await api(`api/calls/${id}`);
-    const view = renderCall(detail, call, `api/calls/${id}/audio`);
+    const view = renderCall(detail, call, (path) => `api/calls/${id}/${path}`);
     const actions = element('div', 'actions');
     const unread = element('button', '', 'Đánh dấu chưa đọc');
     unread.addEventListener('click', () => setRead(id, false));

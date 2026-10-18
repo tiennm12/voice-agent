@@ -29,7 +29,7 @@ function urgencyBadge(call) {
   return call.urgency ? element('span', 'badge', `Độ khẩn: ${call.urgency}`) : null;
 }
 
-function renderCall(container, call, audioUrl) {
+function renderCall(container, call, recordingUrl) {
   const view = element('article', 'call-view');
 
   view.append(element('h2', '', call.caller || 'Số không rõ'));
@@ -47,13 +47,20 @@ function renderCall(container, call, audioUrl) {
   }
   view.append(facts);
 
-  if ((call.recordings || []).includes('caller')) {
+  // recordingUrl('audio') is the caller's side, recordingUrl('agent-audio') the agent's.
+  for (const [who, path, label] of [
+    ['caller', 'audio', 'Giọng người gọi'],
+    ['agent', 'agent-audio', 'Giọng trợ lý'],
+  ]) {
+    if (!(call.recordings || []).includes(who)) continue;
     const audio = element('audio');
     audio.controls = true;
     audio.preload = 'none';
-    audio.src = audioUrl;
-    audio.setAttribute('aria-label', 'Ghi âm giọng người gọi');
-    view.append(audio);
+    audio.src = recordingUrl(path);
+    audio.setAttribute('aria-label', `Ghi âm: ${label}`);
+    const player = element('figure', 'recording');
+    player.append(element('figcaption', '', label), audio);
+    view.append(player);
   }
 
   const transcript = element('ol', 'transcript');

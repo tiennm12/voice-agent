@@ -155,12 +155,19 @@ def create_app(config, *, ws_connect=None, openai_client=None, http=None):
         cfg, overrides = with_overrides(config, request.query)
         # The bridge page asks for 'pcm'; anything unrecognized gets the mic page's MP3.
         audio = request.query.get('audio') if request.query.get('audio') in AUDIO_FORMATS else 'mp3'
+        # ElevenLabs speaks in the format asked for; the OpenAI voices only ever in PCM.
+        record.open_agent_audio('pcm' if cfg.pipeline in ('realtime', 'live') else audio)
+
+        def send_audio(data):
+            record.write_agent_audio(data)
+            outbox.put_nowait(data)
+
         orchestrator, tts = build_agent(
             cfg,
             # Read per call, so what the owner saves in the dashboard applies from the next call on.
             effective_settings(config, db.get_settings()),
             record, upstream, session_id, audio,
-            send_control=send_control, send_audio=outbox.put_nowait, on_hangup=lambda: outbox.put_nowait(None),
+            send_control=send_control, send_audio=send_audio, on_hangup=lambda: outbox.put_nowait(None),
         )
 
         log.info('[%s] [server] new call connected%s', session_id, f' with overrides {overrides}' if overrides else '')

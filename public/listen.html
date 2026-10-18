@@ -25,7 +25,7 @@
       fetch(`api/calls/${callId}${access}`)
         .then((response) => (response.ok ? response.json() : Promise.reject(response.status)))
         .then((call) => {
-          renderCall(container, call, `api/calls/${callId}/audio${access}`);
+          renderCall(container, call, (path) => `api/calls/${callId}/${path}${access}`);
           // Opening the link is reading the call: it stops the urgent reminders.
           return fetch(`api/calls/${callId}/read${access}`, {
             method: 'POST',

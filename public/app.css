@@ -109,7 +109,9 @@ main { max-width: 1100px; margin: 0 auto; padding: 16px; }
 .call-view dl { margin: 0 0 12px; display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; }
 .call-view dt { color: var(--muted); }
 .call-view dd { margin: 0; }
-.call-view audio { width: 100%; margin-bottom: 12px; }
+.call-view .recording { margin: 0 0 12px; }
+.call-view .recording figcaption { color: var(--muted); font-size: 14px; }
+.call-view audio { width: 100%; }
 .call-view .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
 
 .transcript { list-style: none; margin: 0 0 12px; padding: 0; display: flex; flex-direction: column; gap: 6px; }

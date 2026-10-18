@@ -46,7 +46,9 @@ Listing or cloning voices needs an ElevenLabs API key with the `voices_read` /
 
 - A row in `data/voicemail.db` (SQLite): caller number, transcript, summary
   (`caller_name`, `summary`, `urgency`, `category`), usage and estimated cost.
-- `data/calls/<id>/caller.wav` — the caller's side of the call.
+- `data/calls/<id>/caller.wav` — the caller's side of the call; `agent.wav` (PCM: the
+  bridge, realtime, live) or `agent.mp3` (the mic page) — the agent's, as sent, so speech
+  the caller cut off is in it too. The dashboard plays both.
 - Calls older than `RETENTION_DAYS` (default 30) are deleted, recording
   included.
 - `data/backups/voicemail-<date>.db` — a copy of the database taken at start-up and

@@ -16,7 +16,7 @@ CALL_LINK_LIFETIME = 7 * 24 * 3600
 # Served to anyone: the login page, and the two assets the call-link page is built from.
 PUBLIC_PATHS = {'/login', '/app.css', '/call-view.js'}
 # All a call link's token opens: that one call's page and its own API routes.
-CALL_LINK_PATH = re.compile(r'/c/(?P<page_id>[^/]+)|/api/calls/(?P<api_id>[^/]+)(/audio|/read)?')
+CALL_LINK_PATH = re.compile(r'/c/(?P<page_id>[^/]+)|/api/calls/(?P<api_id>[^/]+)(/audio|/agent-audio|/read)?')
 # Seconds a wrong password costs, served one at a time across all clients: at most one guess per second.
 # ponytail: one global queue, so a guesser also slows the owner's own typos (never the right password).
 # Per-IP limits if that ever bites.

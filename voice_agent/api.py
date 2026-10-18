@@ -18,6 +18,9 @@ log = logging.getLogger(__name__)
 # The shape CallRecord gives its ids. Anything else never reaches the database or the disk.
 CALL_ID = re.compile(r'\d{8}T\d{6}_[0-9a-f]{8}')
 MAX_CLONE_BYTES = 10 * 1024 * 1024  # all voice samples of one upload together
+# Each side of a call and the files it may be kept in (see CallRecord).
+RECORDINGS = {'caller': ('caller.wav',), 'agent': ('agent.wav', 'agent.mp3')}
+RECORDING_TYPES = {'.wav': 'audio/wav', '.mp3': 'audio/mpeg'}
 MAX_VOICE_NAME = 60
 
 json_response = partial(web.json_response, dumps=partial(json.dumps, ensure_ascii=False))
@@ -89,7 +92,9 @@ def setup_api(app, db, config, public_dir, upstream):
         call = call_or_404(request)
         # Which players the page should show: a blocked attempt, or a call cut off at once, has no recording.
         folder = config.data_dir / 'calls' / call['id']
-        call['recordings'] = [who for who, name in (('caller', 'caller.wav'),) if _has_sound(folder / name)]
+        call['recordings'] = [
+            who for who, names in RECORDINGS.items() if any(_has_sound(folder / name) for name in names)
+        ]
         return json_response(call)
 
     async def mark_read(request):
@@ -102,12 +107,14 @@ def setup_api(app, db, config, public_dir, upstream):
 
     async def get_audio(request):
         call = call_or_404(request)
-        recording = config.data_dir / 'calls' / call['id'] / 'caller.wav'
-        if not recording.is_file():
-            raise web.HTTPNotFound()
-        # FileResponse handles Range, so the player can seek. The type is spelled out because
-        # the guessed one is 'audio/vnd.wave', which not every player recognizes.
-        return web.FileResponse(recording, headers={'Content-Type': 'audio/wav'})
+        who = 'agent' if request.path.endswith('/agent-audio') else 'caller'
+        for name in RECORDINGS[who]:
+            recording = config.data_dir / 'calls' / call['id'] / name
+            if recording.is_file():
+                # FileResponse handles Range, so the player can seek. The type is spelled out because
+                # the guessed one for WAV is 'audio/vnd.wave', which not every player recognizes.
+                return web.FileResponse(recording, headers={'Content-Type': RECORDING_TYPES[recording.suffix]})
+        raise web.HTTPNotFound()
 
     async def listen_page(request):
         # One call on a page of its own, for call links; the page fetches the call itself.
@@ -210,6 +217,7 @@ def setup_api(app, db, config, public_dir, upstream):
     app.router.add_get('/api/calls/{id}', get_call)
     app.router.add_post('/api/calls/{id}/read', mark_read)
     app.router.add_get('/api/calls/{id}/audio', get_audio)
+    app.router.add_get('/api/calls/{id}/agent-audio', get_audio)
     app.router.add_get('/api/stats', get_stats)
     app.router.add_get('/api/settings', get_settings)
     app.router.add_put('/api/settings', put_settings)
