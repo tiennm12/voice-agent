@@ -10,7 +10,7 @@ import {
   SessionState,
   UserAgent,
   Web,
-} from 'https://cdn.jsdelivr.net/npm/sip.js@0.20.0/+esm';
+} from './vendor/sip-0.20.0.js';
 
 const SIP_SERVER = 'wss://sip.etelecom.vn:10443';
 

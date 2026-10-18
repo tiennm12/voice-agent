@@ -154,6 +154,15 @@ async def test_serves_the_browser_client_with_script_content_types(served):
         assert 'javascript' in script.headers['Content-Type'], path
 
 
+async def test_the_bridge_loads_sip_js_from_this_server_not_a_cdn(served):
+    client, _ = served
+    bridge = await (await client.get('/bridge.js')).text()
+
+    assert "from './vendor/sip-0.20.0.js'" in bridge and 'https://' not in bridge
+    vendored = await client.get('/vendor/sip-0.20.0.js')
+    assert vendored.status == 200 and 'javascript' in vendored.headers['Content-Type']
+
+
 async def test_browsers_must_revalidate_pages_and_never_store_api_answers(served, anonymous):
     client, _ = served
 
