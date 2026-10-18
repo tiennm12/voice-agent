@@ -3,7 +3,7 @@ import base64
 import logging
 import time
 
-from .call_timers import GOODBYE_GRACE, CallTimers
+from .call_timers import GOODBYE_GRACE, WRAP_UP, CallTimers
 from .text_chunker import TextChunker
 from .ws_client import JsonWsClient
 
@@ -53,7 +53,7 @@ class RealtimeAgent(JsonWsClient):
             turn_detection or {'type': 'server_vad'}
         )
         self._transcription = {'model': transcribe_model} | ({'language': language} if language else {})
-        self._timers = CallTimers(on_hangup, max_call, self._tag)
+        self._timers = CallTimers(on_hangup, max_call, self._tag, on_wrap_up=self._wrap_up)
         self._bytes_per_second = BYTES_PER_SECOND
         self._speech_stopped_at = None  # until the first audio of the reply arrives
         self._speaking = False
@@ -97,10 +97,25 @@ class RealtimeAgent(JsonWsClient):
         }
 
     async def _greet(self):
+        await self._say_verbatim(self._greeting)
+
+    async def _say_verbatim(self, text):
         await self._send({
             'type': 'response.create',
-            'response': {'instructions': f'Hãy nói đúng nguyên văn câu sau, không thêm gì: {self._greeting}'},
+            'response': {'instructions': f'Hãy nói đúng nguyên văn câu sau, không thêm gì: {text}'},
         })
+
+    def _wrap_up(self):
+        # The call is about to hit max_call: the reply in progress gives way to the goodbye, then the hangup.
+        # Hybrid too: the model writes the goodbye and ElevenLabs speaks it, like any reply.
+        self._send_control({'type': 'interrupt'})
+        self._timers.reset_playback()
+        self._hangup_after_response = True
+        self._spawn(self._say_wrap_up())
+
+    async def _say_wrap_up(self):
+        await self._send({'type': 'response.cancel'})  # refused harmlessly when nothing is being said
+        await self._say_verbatim(WRAP_UP)
 
     def _on_disconnected(self):
         # The one socket that hears (and maybe speaks) is gone: nothing more can happen on this call.
@@ -131,8 +146,11 @@ class RealtimeAgent(JsonWsClient):
         elif kind == 'response.done':
             self._on_response_done(event.get('response') or {})
         elif kind == 'error':
-            self.emit('error', RuntimeError((event.get('error') or {}).get('message') or 'Realtime API error'))
-            self._send_control({'type': 'error', 'message': (event.get('error') or {}).get('message', '')})
+            error = event.get('error') or {}
+            if error.get('code') == 'response_cancel_not_active':
+                return  # the wrap-up's cancel found nothing to cancel: nothing went wrong
+            self.emit('error', RuntimeError(error.get('message') or 'Realtime API error'))
+            self._send_control({'type': 'error', 'message': error.get('message', '')})
 
     def _on_speech_started(self):
         # The server already cancelled its response; flush what the browser still holds.
@@ -292,6 +310,10 @@ class HybridAgent(RealtimeAgent):
     def _on_speech_started(self):
         self._abort_reply()
         super()._on_speech_started()
+
+    def _wrap_up(self):
+        self._abort_reply()  # now, not when the goodbye's response starts: its audio would keep coming
+        super()._wrap_up()
 
     def _finish_response(self):
         if self._first_text_at is not None and self._chunker is not None:

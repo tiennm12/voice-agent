@@ -5,7 +5,9 @@ from types import SimpleNamespace
 import pytest
 
 from fakes import FakeTts, FakeWs, fake_ws_connect, tick
+from voice_agent import call_timers
 from voice_agent.call_record import compute_cost
+from voice_agent.call_timers import WRAP_UP
 from voice_agent.realtime_agent import HybridAgent, RealtimeAgent
 
 
@@ -212,6 +214,42 @@ async def test_hybrid_end_call_without_words_hangs_up_at_once(monkeypatch):
 
     assert ctx.hangups == [True]
     assert ctx.tts.sent_text == []
+    ctx.agent.stop()
+
+
+async def test_before_the_cap_the_realtime_agent_cuts_in_with_the_wrap_up_goodbye_and_hangs_up(monkeypatch):
+    monkeypatch.setattr(call_timers, 'WRAP_UP_LEAD', 1.0)
+    ws = FakeWs()
+    agent, _, controls, _, hangups = make_agent(ws, max_call=1.2)  # wrap-up at 0.2 s, cap at 1.2 s
+    await agent.start()
+
+    await asyncio.sleep(0.25)
+    assert {'type': 'interrupt'} in controls
+    assert ws.sent[-2] == {'type': 'response.cancel'}
+    assert WRAP_UP in ws.sent[-1]['response']['instructions']
+
+    ws.feed({'type': 'error', 'error': {'code': 'response_cancel_not_active', 'message': 'no active response'}})
+    ws.feed({'type': 'response.done', 'response': {'status': 'completed', 'output': []}})
+    await tick()
+    assert not any(c['type'] == 'error' for c in controls), 'nothing to cancel is not an error'
+    await asyncio.sleep(0.6)  # GOODBYE_GRACE
+    assert hangups == [True], 'hung up after the goodbye, before the cap'
+    agent.stop()
+
+
+async def test_hybrid_wrap_up_stops_the_reply_being_spoken_at_once(monkeypatch):
+    monkeypatch.setattr(call_timers, 'WRAP_UP_LEAD', 0.15)
+    ws = FakeWs()
+    ctx = make_hybrid(ws, max_call=0.3)
+    await ctx.agent.start()
+    ws.feed({'type': 'response.created', 'response': {}})
+    ws.feed({'type': 'response.output_text.delta', 'delta': 'Một câu dài đang nói dở'})
+    await tick()
+    aborts = ctx.tts.aborts
+
+    await asyncio.sleep(0.2)
+    assert ctx.tts.aborts > aborts
+    assert WRAP_UP in ws.sent[-1]['response']['instructions']
     ctx.agent.stop()
 
 

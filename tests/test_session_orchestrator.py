@@ -3,7 +3,8 @@ import logging
 from types import SimpleNamespace
 
 from fakes import FakeTts, tick
-from voice_agent import session_orchestrator
+from voice_agent import call_timers, session_orchestrator
+from voice_agent.call_timers import WRAP_UP
 from voice_agent.session_orchestrator import LLM_ERROR_APOLOGY, SessionOrchestrator
 
 DONE = object()
@@ -611,6 +612,35 @@ async def test_hangs_up_at_the_maximum_call_duration_even_mid_turn():
     await asyncio.sleep(0.25)
 
     assert ctx.hangups == [True]
+
+
+async def test_shortly_before_the_cap_the_agent_says_goodbye_over_its_reply_and_hangs_up(monkeypatch):
+    monkeypatch.setattr(call_timers, 'WRAP_UP_LEAD', 1.0)
+    # Wrap-up at 0.2 s, cap at 1.2 s; the reply's stream never finishes.
+    ctx = make(llm=FakeLlm('Đang kể một chuyện rất dài'), max_call=1.2)
+
+    await ctx.orchestrator.start()
+    ctx.stt.emit('transcript_final', 'Kể chuyện đi')
+    await tick()
+    await asyncio.sleep(0.25)
+
+    assert ctx.llm.cancelled == 1, 'the reply in progress gives way'
+    assert has(ctx.control, type='interrupt')
+    assert has(ctx.control, type='transcript', role='assistant', text=WRAP_UP)
+    assert ctx.tts.sent_text[-1] == 'chào bạn nhé.'
+    ctx.tts.emit('turn_complete')
+    await asyncio.sleep(0.6)  # GOODBYE_GRACE
+    assert ctx.hangups == [True], 'hung up after the goodbye, before the cap'
+
+
+async def test_no_wrap_up_on_a_cap_too_short_to_say_it():
+    ctx = make(max_call=0.05)
+
+    await ctx.orchestrator.start()
+    await asyncio.sleep(0.15)
+
+    assert ctx.hangups == [True]
+    assert not has(ctx.control, type='transcript', role='assistant', text=WRAP_UP)
 
 
 async def test_stop_cancels_the_pending_hangup_timers():

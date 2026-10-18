@@ -3,7 +3,7 @@ import logging
 import time
 from contextlib import aclosing
 
-from .call_timers import GOODBYE_GRACE, CallTimers
+from .call_timers import GOODBYE_GRACE, WRAP_UP, CallTimers
 from .config import HANGUP_MARKER
 from .session_state import SessionState
 from .text_chunker import TextChunker
@@ -54,7 +54,7 @@ class SessionOrchestrator:
         self._tag = f'[{session_id}]'
         self._greeting = greeting
         self._silence_timeout = silence_timeout
-        self._timers = CallTimers(on_hangup, max_call, self._tag)
+        self._timers = CallTimers(on_hangup, max_call, self._tag, on_wrap_up=self._wrap_up)
 
         self._state = SessionState(on_transition=self._on_transition)
         self._history = []
@@ -96,6 +96,18 @@ class SessionOrchestrator:
         await self._stt.send_audio_chunk(data)
 
     # --- hanging up --------------------------------------------------------
+
+    def _wrap_up(self):
+        # The call is about to hit max_call: whatever is being said gives way to the goodbye, which
+        # ends in the hangup marker like any goodbye. A caller talking over it keeps the line until the cap.
+        self._abandon_turn()
+        self._tts.abort()
+        self._send_control({'type': 'interrupt'})
+        self._timers.reset_playback()
+        self._back_to_listening()
+        if self._state.current == 'listening':
+            self._state.transition('TRANSCRIPT_FINAL')
+            self._start_turn(WRAP_UP + HANGUP_MARKER, is_kickoff=True)
 
     def _on_transition(self, state, event):
         self._timers.disarm()

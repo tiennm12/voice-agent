@@ -50,6 +50,8 @@ class LiveAgent(JsonWsClient):
         self._silence_timeout = silence_timeout
         self._tag = f'[{session_id}]'
         self._on_usage = on_usage  # called once, with the session's length in seconds
+        # ponytail: no wrap-up goodbye before max_call: GPT-Live has no way to be told to say a fixed
+        # sentence mid-session. The line just ends at the cap, as before.
         self._timers = CallTimers(on_hangup, max_call, self._tag)
         self._started_at = None
         self._speaking = False
