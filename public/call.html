@@ -40,7 +40,7 @@
             <option value="realtime">realtime: một model nghe và nói (giọng OpenAI)</option>
             <option value="hybrid">hybrid: model realtime nghe, trả lời bằng chữ → ElevenLabs đọc</option>
             <option value="live">live: GPT-Live, vừa nghe vừa nói (giọng OpenAI)</option>
-            <option value="script">script: kịch bản cố định, giọng ElevenLabs tạo sẵn (không chat model)</option>
+            <option value="script">script: kịch bản cố định, giọng ElevenLabs tạo sẵn; chat model chỉ khi người gọi hỏi</option>
             <option value="blind">nghe mù: máy chọn ngẫu nhiên, chỉ báo là pipeline nào khi cuộc gọi kết thúc</option>
           </select>
         </label>
@@ -176,6 +176,14 @@
             <option value="0">tắt</option>
           </select>
         </label>
+        <label>
+          Hybrid theo kịch bản
+          <select name="hybrid_script">
+            <option value="">mặc định</option>
+            <option value="1">bật (model hỏi theo kịch bản, câu đúng nguyên văn phát từ audio có sẵn)</option>
+            <option value="0">tắt</option>
+          </select>
+        </label>
       </fieldset>
     </details>
     <p>Trạng thái: <span id="status">idle</span></p>
@@ -230,9 +238,10 @@
         vad_threshold: ['realtime, hybrid, classic/script + OpenAI/ElevenLabs, trừ semantic_vad',
           (v) => v.pipeline !== 'live' && !semantic(v) && !(LISTENS_LIKE_CLASSIC.includes(v.pipeline) && v.stt_provider === 'soniox')],
         stt_min_logprob: ['classic/script + OpenAI', (v) => any(v.pipeline, ...LISTENS_LIKE_CLASSIC) && any(v.stt_provider, 'openai')],
-        openai_chat_model: ['classic', (v) => any(v.pipeline, 'classic')],
+        openai_chat_model: ['classic, script (khi người gọi hỏi)', (v) => any(v.pipeline, ...LISTENS_LIKE_CLASSIC)],
         elevenlabs_model_id: ['classic, hybrid, script', (v) => any(v.pipeline, 'classic', 'hybrid', 'script')],
-        elevenlabs_auto_mode: ['classic, hybrid', (v) => any(v.pipeline, 'classic', 'hybrid')],
+        elevenlabs_auto_mode: ['classic, hybrid, script', (v) => any(v.pipeline, 'classic', 'hybrid', 'script')],
+        hybrid_script: ['hybrid', (v) => any(v.pipeline, 'hybrid')],
       };
       const PIPELINE_NAMES = ['classic', 'realtime', 'hybrid', 'live', 'script'];
       // What "mặc định của máy chủ" means, from /api/call-defaults; until it arrives (or if it fails) those stay unknown.

@@ -129,8 +129,8 @@
             <span class="hint">Viết {{OWNER_NAME}} ở chỗ cần tên chủ máy. Quy tắc tự cúp máy do hệ thống thêm vào.</span>
             <textarea name="system_doc" rows="16" maxlength="8000"></textarea>
           </label>
-          <label>Kịch bản cố định (pipeline script)
-            <span class="hint">Mỗi dòng một câu, đọc lần lượt sau mỗi lần người gọi trả lời; dòng cuối là câu chốt rồi cúp máy. Giọng đọc được tạo sẵn một lần rồi phát lại, không dùng chat model.</span>
+          <label>Kịch bản cố định (pipeline script, hoặc hybrid theo kịch bản)
+            <span class="hint">Mỗi dòng một câu, hỏi lần lượt; dòng cuối là câu chốt rồi cúp máy. Giọng đọc của các câu này được tạo sẵn một lần rồi phát lại. Người gọi hỏi điều khác thì AI trả lời ngắn rồi hỏi tiếp.</span>
             <textarea name="script" rows="5" maxlength="1000"></textarea>
           </label>
           <label>Số bị chặn

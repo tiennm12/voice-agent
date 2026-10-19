@@ -475,12 +475,39 @@ async def test_the_script_pipeline_asks_the_next_scripted_question_from_cached_a
         frames = await receive_until(ws, lambda f: f == b'\x00\x01')
 
         assert {'type': 'transcript', 'role': 'assistant', 'text': 'Bạn cho mình xin tên với ạ?'} in frames
-        assert upstream.tts == [], 'no ElevenLabs socket'
+        assert spoken_live(upstream) == [], 'no text read by ElevenLabs live'
         assert not [call for call in upstream.openai.calls if call.get('stream')], 'no chat model'
+
+        sockets = len(upstream.tts)  # each turn opens one in case it has to go live
+        upstream.stt.feed({'type': 'conversation.item.input_audio_transcription.completed', 'transcript': 'Anh Tuấn đâu rồi?'})
+        live = await upstream.tts_socket(sockets)
+        assert [call for call in upstream.openai.calls if call.get('stream')], 'a question goes to the chat model'
+        assert 'chỉ trả lời thật ngắn' in upstream.openai.calls[-1]['messages'][0]['content']
+        assert [sent['text'] for sent in live.sent[1:-1]] == ['Xin chào. ', 'Việc này có gấp không ạ? ']
         await ws.close()
         rendered = {request['json']['text'] for request in http.requests if 'text-to-speech' in request['url']}
         assert GREETING in rendered and 'Việc này có gấp không ạ?' in rendered, 'the whole script rendered ahead'
         assert list((tmp_path / 'tts_cache').glob('*.mp3'))
+    finally:
+        await client.close()
+
+
+def spoken_live(upstream):
+    """Text sent to ElevenLabs streaming sockets, past their opening message."""
+    return [sent['text'] for ws in upstream.tts for sent in ws.sent[1:] if sent['text']]
+
+
+async def test_hybrid_can_follow_the_script_and_play_its_lines_from_cached_audio(tmp_path):
+    http = FakeHttp(replies={'text-to-speech': (200, b'\x00\x01')})
+    client, upstream = await start_app(tmp_path, http=http)
+    try:
+        ws = await client.ws_connect('/ws?pipeline=hybrid&hybrid_script=1')
+        await receive_until(ws, lambda f: f == b'\x00\x01')  # the greeting, from the cache
+
+        instructions = upstream.stt.sent[0]['session']['instructions']
+        assert '1. Bạn cho mình xin tên với ạ?' in instructions
+        assert spoken_live(upstream) == []
+        await ws.close()
     finally:
         await client.close()
 

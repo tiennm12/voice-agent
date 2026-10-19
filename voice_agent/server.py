@@ -25,7 +25,7 @@ from .llm_client import stream_completion
 from .realtime_agent import HybridAgent, RealtimeAgent
 from .call_timers import WRAP_UP
 from .realtime_stt_client import RealtimeSttClient, turn_detection
-from .script import CachedTts, script_replies
+from .script import SCRIPT_LLM_RULE, CachedTts, script_instructions, script_replies
 from .session_orchestrator import SessionOrchestrator
 from .settings import effective_settings, pick_greeting
 from .soniox_stt_client import SonioxSttClient
@@ -227,9 +227,11 @@ def build_agent(cfg, settings, record, upstream, session_id, audio, *, send_cont
     """The agent for one call in the pipeline cfg asks for, and its ElevenLabs client (None when it has none).
 
     classic: STT -> chat model -> ElevenLabs. realtime: one speech-to-speech session (OpenAI voices).
-    hybrid: a Realtime session hears the caller and answers in text, spoken by ElevenLabs.
+    hybrid: a Realtime session hears the caller and answers in text, spoken by ElevenLabs; with hybrid_script
+    it follows the owner's script, whose lines play from pre-rendered audio.
     live: a full-duplex GPT-Live session (OpenAI voices).
-    script: classic's STT, then the owner's script line by line, spoken from pre-rendered ElevenLabs audio.
+    script: classic's STT, then the owner's script line by line from pre-rendered audio; the chat model
+    answers only when the caller asks something.
     """
     language = None if settings['language'] == 'auto' else settings['language']
     greeting = pick_greeting(settings, record.started_at)
@@ -243,6 +245,19 @@ def build_agent(cfg, settings, record, upstream, session_id, audio, *, send_cont
             api_key=cfg.elevenlabs_api_key, voice_id=settings['voice_id'], model_id=cfg.elevenlabs_model_id,
             ws_connect=upstream['ws_connect'], audio=audio, auto_mode=cfg.elevenlabs_auto_mode,
         )
+
+    script = [line.strip() for line in settings['script'].splitlines() if line.strip()]
+
+    def make_cached_tts():
+        known = [greeting, *script, WRAP_UP]
+        tts = CachedTts(
+            http=upstream['http'], cache_dir=cfg.data_dir / 'tts_cache', api_key=cfg.elevenlabs_api_key,
+            voice_id=settings['voice_id'], model_id=cfg.elevenlabs_model_id, audio=audio,
+            live=make_tts(), known=known,
+        )
+        # Rendered while the greeting plays, the first call after a change; read from disk ever after.
+        tts.prefetch(known)
+        return tts
 
     if cfg.pipeline == 'live':
         rate = cfg.pricing.get('live', {}).get(cfg.live_model, {}).get('per_minute')
@@ -289,7 +304,11 @@ def build_agent(cfg, settings, record, upstream, session_id, audio, *, send_cont
         )
         if cfg.pipeline == 'realtime':
             return RealtimeAgent(voice=cfg.agent_voice, **realtime), None
-        tts = make_tts()
+        if cfg.hybrid_script:
+            realtime['instructions'] += '\n' + script_instructions(script)
+            tts = make_cached_tts()
+        else:
+            tts = make_tts()
         return HybridAgent(tts_client=tts, **realtime), tts
 
     if cfg.stt_provider == 'soniox':
@@ -322,26 +341,22 @@ def build_agent(cfg, settings, record, upstream, session_id, audio, *, send_cont
             vad_eagerness=cfg.vad_eagerness,
         )
     stt.on('usage', record.add_stt_usage)
+    chat = partial(
+        stream_completion,
+        upstream['openai'],
+        model=cfg.openai_chat_model,
+        reasoning_effort=cfg.openai_reasoning_effort,
+        on_usage=record.add_llm_usage,
+    )
+    system_prompt = build_system_prompt(settings['system_doc'], settings['owner_name'], settings['language'])
     if cfg.pipeline == 'script':
-        lines = [line.strip() for line in settings['script'].splitlines() if line.strip()]
-        tts = CachedTts(
-            http=upstream['http'], cache_dir=cfg.data_dir / 'tts_cache', api_key=cfg.elevenlabs_api_key,
-            voice_id=settings['voice_id'], model_id=cfg.elevenlabs_model_id, audio=audio,
-        )
-        # Rendered while the greeting plays, the first call after a change; read from disk ever after.
-        tts.prefetch([greeting, *lines, WRAP_UP])
-        llm_stream = script_replies(lines)
+        tts = make_cached_tts()
+        llm_stream = script_replies(script, chat)
+        system_prompt += '\n' + SCRIPT_LLM_RULE
     else:
-        tts = make_tts()
-        llm_stream = partial(
-            stream_completion,
-            upstream['openai'],
-            model=cfg.openai_chat_model,
-            reasoning_effort=cfg.openai_reasoning_effort,
-            on_usage=record.add_llm_usage,
-        )
+        tts, llm_stream = make_tts(), chat
     return SessionOrchestrator(
-        system_prompt=build_system_prompt(settings['system_doc'], settings['owner_name'], settings['language']),
+        system_prompt=system_prompt,
         stt_client=stt,
         llm_stream=llm_stream,
         tts_client=tts,

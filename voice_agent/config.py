@@ -54,6 +54,7 @@ class Config:
     agent_reasoning: str | None = None  # pipeline=realtime; None = the model's own default
     live_model: str = 'gpt-live-1'  # pipeline=live
     live_voice: str = 'marin'
+    hybrid_script: bool = False  # pipeline=hybrid follows the owner's script, its lines spoken from cached audio
     soniox_api_key: str | None = None  # stt_provider=soniox
     soniox_endpoint_level: int | None = None  # 0-3: higher ends the caller's turn sooner; None = Soniox's default
 
@@ -102,8 +103,9 @@ def with_overrides(config, query):
             continue
         if low <= value <= high:
             changes[key] = value
-    if query.get('elevenlabs_auto_mode') in ('0', '1'):
-        changes['elevenlabs_auto_mode'] = query['elevenlabs_auto_mode'] == '1'
+    for key in ('elevenlabs_auto_mode', 'hybrid_script'):
+        if query.get(key) in ('0', '1'):
+            changes[key] = query[key] == '1'
     if 'openai_chat_model' in changes:
         # Same rule as load_config: only the default model takes the default reasoning effort.
         changes['openai_reasoning_effort'] = CHAT_REASONING_EFFORT if changes['openai_chat_model'] == CHAT_MODEL else None
@@ -180,6 +182,7 @@ def load_config(env=None, read_system_doc=_read_system_doc, read_pricing=_read_p
         elevenlabs_voice_id=env['ELEVENLABS_VOICE_ID'],
         elevenlabs_model_id=env.get('ELEVENLABS_MODEL_ID') or 'eleven_flash_v2_5',
         elevenlabs_auto_mode=(env.get('ELEVENLABS_AUTO_MODE') or '').lower() in ('1', 'true', 'yes'),
+        hybrid_script=(env.get('HYBRID_SCRIPT') or '').lower() in ('1', 'true', 'yes'),
         port=int(env.get('PORT') or 3000),
         # owner_name and system_doc are only the defaults: the dashboard's settings override them per call.
         owner_name=env.get('OWNER_NAME') or 'chủ máy',

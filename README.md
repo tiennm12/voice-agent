@@ -160,6 +160,30 @@ All, 2026-10-17, same sentence, median of 5 calls each (`scripts/bench.py`):
 For live the first audio can be a short "dạ" before the answer itself: the model talks when it
 judges the caller done, sometimes before a silence-based VAD would.
 
+`PIPELINE=script` hears the caller like classic, then asks the owner's fixed script (dashboard,
+"Kịch bản cố định": one line per turn, the last one ends the call) from audio ElevenLabs rendered
+once into `DATA_DIR/tts_cache`. A caller turn with a question word goes to the chat model, which
+answers in one line before the next scripted question (read by ElevenLabs live). `HYBRID_SCRIPT=1`
+(or `hybrid_script=1`) gives hybrid the same script as instructions; a reply that is word for word
+a script line plays from the cache, anything else is read live.
+
+2026-10-19, same method, median of 5 calls (question turns: server-side `response_ms`, which
+leaves out the VAD silence, so add ~0.5 s to compare):
+
+| Pipeline | Median | Runs |
+|---|---|---|
+| script, scripted turn | 1.33 s | 1.16-1.43 s |
+| script + `vad_silence_ms=300` | 1.15 s | 1.07-1.26 s |
+| hybrid, gpt-realtime-2.1-mini | 1.57 s | 1.43-2.24 s |
+| hybrid + `hybrid_script=1` | 1.51 s | 1.47-1.67 s |
+| script, a question (`response_ms`) | 2.00 s | 1.90-2.34 s |
+| classic, same question (`response_ms`, 3 calls) | 1.74 s | 1.69-1.84 s |
+
+A scripted turn waits only for the transcript (`llm_ms=0 tts_ms=0`), so turn detection and STT are
+all that is left. Hybrid with the script gains little: the model said a line word for word in
+only ~4 replies out of 10 (it likes to add "Dạ, mình ghi nhận…"), and a cached line plays only
+once the model has finished writing it.
+
 Earlier realtime measurements, same method, median of 5-6 calls:
 
 | Setup | Median |

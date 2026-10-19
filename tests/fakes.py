@@ -73,6 +73,7 @@ class FakeTts:
         self.end_turns = 0
         self.aborts = 0
         self.bytes_per_second = 16000
+        self.characters_sent = 0
 
     async def connect(self):
         self.connects += 1
