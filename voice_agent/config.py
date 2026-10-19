@@ -44,7 +44,8 @@ class Config:
     urgent_reminder_minutes: float
     # 'classic' = STT -> chat model -> ElevenLabs TTS; 'realtime' = one speech-to-speech session;
     # 'hybrid' = a Realtime session hears the caller and answers in text, spoken by ElevenLabs;
-    # 'live' = a GPT-Live session: full-duplex, listens while it speaks.
+    # 'live' = a GPT-Live session: full-duplex, listens while it speaks;
+    # 'script' = classic's STT, then the owner's fixed script spoken from pre-rendered audio, no chat model.
     pipeline: str = 'classic'
     vad_type: str = 'server_vad'  # or 'semantic_vad', which ignores vad_silence_ms / vad_threshold
     vad_eagerness: str | None = None  # semantic_vad only: low / medium / high
@@ -68,7 +69,7 @@ OVERRIDE_CHOICES = {
     'openai_transcribe_model': {'gpt-4o-transcribe', 'gpt-4o-mini-transcribe'},
     'openai_chat_model': {'gpt-6-luna', 'gpt-4.1-mini', 'gpt-4o-mini', 'gpt-4.1-nano'},
     'elevenlabs_model_id': {'eleven_flash_v2_5', 'eleven_turbo_v2_5'},
-    'pipeline': {'classic', 'realtime', 'hybrid', 'live'},
+    'pipeline': {'classic', 'realtime', 'hybrid', 'live', 'script'},
     'vad_type': {'server_vad', 'semantic_vad'},
     'vad_eagerness': {'low', 'medium', 'high'},
     'agent_model': {'gpt-realtime-2.1', 'gpt-realtime-2.1-mini', 'gpt-realtime-mini', 'gpt-realtime-2', 'gpt-realtime'},

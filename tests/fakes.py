@@ -184,6 +184,9 @@ class FakeHttpResponse:
     async def json(self, **kwargs):
         return self._body
 
+    async def read(self):
+        return self._body
+
     async def text(self):
         return json.dumps(self._body) if self._body is not None else 'telegram says no'
 

@@ -23,7 +23,9 @@ from .db import Database
 from .live_agent import LiveAgent
 from .llm_client import stream_completion
 from .realtime_agent import HybridAgent, RealtimeAgent
+from .call_timers import WRAP_UP
 from .realtime_stt_client import RealtimeSttClient, turn_detection
+from .script import CachedTts, script_replies
 from .session_orchestrator import SessionOrchestrator
 from .settings import effective_settings, pick_greeting
 from .soniox_stt_client import SonioxSttClient
@@ -227,6 +229,7 @@ def build_agent(cfg, settings, record, upstream, session_id, audio, *, send_cont
     classic: STT -> chat model -> ElevenLabs. realtime: one speech-to-speech session (OpenAI voices).
     hybrid: a Realtime session hears the caller and answers in text, spoken by ElevenLabs.
     live: a full-duplex GPT-Live session (OpenAI voices).
+    script: classic's STT, then the owner's script line by line, spoken from pre-rendered ElevenLabs audio.
     """
     language = None if settings['language'] == 'auto' else settings['language']
     greeting = pick_greeting(settings, record.started_at)
@@ -319,17 +322,28 @@ def build_agent(cfg, settings, record, upstream, session_id, audio, *, send_cont
             vad_eagerness=cfg.vad_eagerness,
         )
     stt.on('usage', record.add_stt_usage)
-    tts = make_tts()
-    return SessionOrchestrator(
-        system_prompt=build_system_prompt(settings['system_doc'], settings['owner_name'], settings['language']),
-        stt_client=stt,
-        llm_stream=partial(
+    if cfg.pipeline == 'script':
+        lines = [line.strip() for line in settings['script'].splitlines() if line.strip()]
+        tts = CachedTts(
+            http=upstream['http'], cache_dir=cfg.data_dir / 'tts_cache', api_key=cfg.elevenlabs_api_key,
+            voice_id=settings['voice_id'], model_id=cfg.elevenlabs_model_id, audio=audio,
+        )
+        # Rendered while the greeting plays, the first call after a change; read from disk ever after.
+        tts.prefetch([greeting, *lines, WRAP_UP])
+        llm_stream = script_replies(lines)
+    else:
+        tts = make_tts()
+        llm_stream = partial(
             stream_completion,
             upstream['openai'],
             model=cfg.openai_chat_model,
             reasoning_effort=cfg.openai_reasoning_effort,
             on_usage=record.add_llm_usage,
-        ),
+        )
+    return SessionOrchestrator(
+        system_prompt=build_system_prompt(settings['system_doc'], settings['owner_name'], settings['language']),
+        stt_client=stt,
+        llm_stream=llm_stream,
         tts_client=tts,
         session_id=session_id,
         **common,

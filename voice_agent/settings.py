@@ -8,6 +8,7 @@ TEXT_LIMITS = {
     'after_hours_greeting': 500,
     'meeting_greeting': 500,
     'system_doc': 8000,
+    'script': 1000,
 }
 # Settings that are one of a fixed set of values; the first is the default.
 CHOICES = {
@@ -31,6 +32,13 @@ def effective_settings(config, stored):
         'greeting': stored.get('greeting')
         or f'Chào bạn, {owner} hiện không thể nghe máy. {DISCLOSURE} Bạn cần nhắn gì không ạ?',
         'system_doc': stored.get('system_doc') or config.system_doc,
+        # pipeline=script: one line per caller turn, the last one ends the call.
+        'script': stored.get('script') or '\n'.join((
+            'Bạn cho mình xin tên với ạ?',
+            'Việc này có gấp không ạ?',
+            f'Bạn muốn {owner} gọi lại số nào ạ?',
+            f'Cảm ơn bạn, mình đã ghi lại lời nhắn và sẽ báo {owner} ngay. Chào bạn nhé.',
+        )),
         'blocked_numbers': stored.get('blocked_numbers') or [],
         'status': stored.get('status') or CHOICES['status'][0],
         'meeting_greeting': stored.get('meeting_greeting')

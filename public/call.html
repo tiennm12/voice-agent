@@ -40,6 +40,7 @@
             <option value="realtime">realtime: một model nghe và nói (giọng OpenAI)</option>
             <option value="hybrid">hybrid: model realtime nghe, trả lời bằng chữ → ElevenLabs đọc</option>
             <option value="live">live: GPT-Live, vừa nghe vừa nói (giọng OpenAI)</option>
+            <option value="script">script: kịch bản cố định, giọng ElevenLabs tạo sẵn (không chat model)</option>
             <option value="blind">nghe mù: máy chọn ngẫu nhiên, chỉ báo là pipeline nào khi cuộc gọi kết thúc</option>
           </select>
         </label>
@@ -213,26 +214,27 @@
       // option is certainly unused; "" (the server's default) or the blind pick leave the pipeline unknown, so
       // everything stays on. `v` holds every field's value, '' when unset.
       const any = (value, ...allowed) => value === '' || allowed.includes(value);
-      const openaiStt = (v) => any(v.pipeline, 'realtime', 'hybrid') || (v.pipeline === 'classic' && any(v.stt_provider, 'openai'));
-      const semantic = (v) => v.vad_type === 'semantic_vad' && openaiStt(v) && v.pipeline !== '' && (v.pipeline !== 'classic' || v.stt_provider === 'openai');
+      const LISTENS_LIKE_CLASSIC = ['classic', 'script'];  // script hears the caller exactly as classic does
+      const openaiStt = (v) => any(v.pipeline, 'realtime', 'hybrid') || (LISTENS_LIKE_CLASSIC.includes(v.pipeline) && any(v.stt_provider, 'openai'));
+      const semantic = (v) => v.vad_type === 'semantic_vad' && openaiStt(v) && v.pipeline !== '' && (!LISTENS_LIKE_CLASSIC.includes(v.pipeline) || v.stt_provider === 'openai');
       const RULES = {
         live_voice: ['live', (v) => any(v.pipeline, 'live')],
         agent_model: ['realtime, hybrid', (v) => any(v.pipeline, 'realtime', 'hybrid')],
         agent_voice: ['realtime', (v) => any(v.pipeline, 'realtime')],
-        vad_type: ['realtime, hybrid, classic + OpenAI', openaiStt],
+        vad_type: ['realtime, hybrid, classic/script + OpenAI', openaiStt],
         vad_eagerness: ['khi chọn semantic_vad', (v) => openaiStt(v) && v.vad_type === 'semantic_vad'],
-        stt_provider: ['classic', (v) => any(v.pipeline, 'classic')],
-        soniox_endpoint_level: ['classic + Soniox', (v) => any(v.pipeline, 'classic') && any(v.stt_provider, 'soniox')],
-        openai_transcribe_model: ['realtime, hybrid, classic + OpenAI', openaiStt],
+        stt_provider: ['classic, script', (v) => any(v.pipeline, ...LISTENS_LIKE_CLASSIC)],
+        soniox_endpoint_level: ['classic, script + Soniox', (v) => any(v.pipeline, ...LISTENS_LIKE_CLASSIC) && any(v.stt_provider, 'soniox')],
+        openai_transcribe_model: ['realtime, hybrid, classic/script + OpenAI', openaiStt],
         vad_silence_ms: ['mọi pipeline nghe, trừ semantic_vad', (v) => v.pipeline !== 'live' && !semantic(v)],
-        vad_threshold: ['realtime, hybrid, classic + OpenAI/ElevenLabs, trừ semantic_vad',
-          (v) => v.pipeline !== 'live' && !semantic(v) && !(v.pipeline === 'classic' && v.stt_provider === 'soniox')],
-        stt_min_logprob: ['classic + OpenAI', (v) => any(v.pipeline, 'classic') && any(v.stt_provider, 'openai')],
+        vad_threshold: ['realtime, hybrid, classic/script + OpenAI/ElevenLabs, trừ semantic_vad',
+          (v) => v.pipeline !== 'live' && !semantic(v) && !(LISTENS_LIKE_CLASSIC.includes(v.pipeline) && v.stt_provider === 'soniox')],
+        stt_min_logprob: ['classic/script + OpenAI', (v) => any(v.pipeline, ...LISTENS_LIKE_CLASSIC) && any(v.stt_provider, 'openai')],
         openai_chat_model: ['classic', (v) => any(v.pipeline, 'classic')],
-        elevenlabs_model_id: ['classic, hybrid', (v) => any(v.pipeline, 'classic', 'hybrid')],
+        elevenlabs_model_id: ['classic, hybrid, script', (v) => any(v.pipeline, 'classic', 'hybrid', 'script')],
         elevenlabs_auto_mode: ['classic, hybrid', (v) => any(v.pipeline, 'classic', 'hybrid')],
       };
-      const PIPELINE_NAMES = ['classic', 'realtime', 'hybrid', 'live'];
+      const PIPELINE_NAMES = ['classic', 'realtime', 'hybrid', 'live', 'script'];
       // What "mặc định của máy chủ" means, from /api/call-defaults; until it arrives (or if it fails) those stay unknown.
       let defaults = {};
       function values(options) {

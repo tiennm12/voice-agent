@@ -465,6 +465,26 @@ async def test_soniox_stt_can_be_picked_per_call(tmp_path):
         await client.close()
 
 
+async def test_the_script_pipeline_asks_the_next_scripted_question_from_cached_audio_without_a_chat_model(tmp_path):
+    http = FakeHttp(replies={'text-to-speech': (200, b'\x00\x01')})
+    client, upstream = await start_app(tmp_path, http=http)
+    try:
+        ws = await client.ws_connect('/ws?pipeline=script')
+        await receive_until(ws, lambda f: f == {'type': 'state', 'state': 'listening'})  # the greeting has played
+        upstream.stt.feed({'type': 'conversation.item.input_audio_transcription.completed', 'transcript': 'Nhờ gọi lại.'})
+        frames = await receive_until(ws, lambda f: f == b'\x00\x01')
+
+        assert {'type': 'transcript', 'role': 'assistant', 'text': 'Bạn cho mình xin tên với ạ?'} in frames
+        assert upstream.tts == [], 'no ElevenLabs socket'
+        assert not [call for call in upstream.openai.calls if call.get('stream')], 'no chat model'
+        await ws.close()
+        rendered = {request['json']['text'] for request in http.requests if 'text-to-speech' in request['url']}
+        assert GREETING in rendered and 'Việc này có gấp không ạ?' in rendered, 'the whole script rendered ahead'
+        assert list((tmp_path / 'tts_cache').glob('*.mp3'))
+    finally:
+        await client.close()
+
+
 async def test_calls_past_the_retention_period_are_purged_when_the_server_starts(tmp_path):
     # First run records a call; RETENTION_DAYS=0 on the next start makes every finished call "old".
     client, upstream = await start_app(tmp_path)

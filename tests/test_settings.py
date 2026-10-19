@@ -27,6 +27,8 @@ def test_defaults_fill_every_setting_a_call_needs():
         'owner_name': 'anh Tuấn',
         'greeting': 'Chào bạn, anh Tuấn hiện không thể nghe máy. Mình là trợ lý AI, cuộc gọi này được ghi âm để chuyển lời nhắn. Bạn cần nhắn gì không ạ?',
         'system_doc': 'doc',
+        'script': 'Bạn cho mình xin tên với ạ?\nViệc này có gấp không ạ?\nBạn muốn anh Tuấn gọi lại số nào ạ?\n'
+                  'Cảm ơn bạn, mình đã ghi lại lời nhắn và sẽ báo anh Tuấn ngay. Chào bạn nhé.',
         'blocked_numbers': [],
         'status': 'normal',
         'meeting_greeting': 'Chào bạn, anh Tuấn đang họp nên chưa nghe máy được. Mình là trợ lý AI, cuộc gọi này được ghi âm để chuyển lời nhắn. Bạn cần nhắn gì không ạ?',

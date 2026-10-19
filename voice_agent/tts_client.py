@@ -8,6 +8,7 @@ AUDIO_FORMATS = {
     'mp3': ('mp3_44100_128', 128_000 // 8),  # played by an <audio> element (MediaSource)
     'pcm': ('pcm_24000', 24_000 * 2),  # 16-bit mono, played through Web Audio
 }
+VOICE_SETTINGS = {'stability': 0.5, 'similarity_boost': 0.75}
 
 
 class TtsClient(JsonWsClient):
@@ -34,7 +35,7 @@ class TtsClient(JsonWsClient):
             f'?model_id={self._model_id}&output_format={self._output_format}'
             + ('&auto_mode=true' if self._auto_mode else ''),
             {'xi-api-key': self._api_key},
-            {'text': ' ', 'voice_settings': {'stability': 0.5, 'similarity_boost': 0.75}},
+            {'text': ' ', 'voice_settings': VOICE_SETTINGS},
         )
 
     async def send_text(self, text):

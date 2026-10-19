@@ -2,7 +2,7 @@
 // Rendering of a single call lives in call-view.js.
 
 const PAGE_SIZE = 30;
-const TEXT_SETTINGS = ['owner_name', 'greeting', 'meeting_greeting', 'after_hours_greeting', 'system_doc'];
+const TEXT_SETTINGS = ['owner_name', 'greeting', 'meeting_greeting', 'after_hours_greeting', 'system_doc', 'script'];
 const CHOICE_SETTINGS = ['status', 'language'];
 
 let calls = [];
