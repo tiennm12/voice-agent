@@ -233,11 +233,20 @@
         elevenlabs_auto_mode: ['classic, hybrid', (v) => any(v.pipeline, 'classic', 'hybrid')],
       };
       const PIPELINE_NAMES = ['classic', 'realtime', 'hybrid', 'live'];
+      // What "mặc định của máy chủ" means, from /api/call-defaults; until it arrives (or if it fails) those stay unknown.
+      let defaults = {};
       function values(options) {
-        const v = Object.fromEntries([...fields].map((field) => [field.name, options[field.name] ?? '']));
-        if (!PIPELINE_NAMES.includes(v.pipeline)) v.pipeline = '';  // default or blind: unknown
+        const v = Object.fromEntries([...fields].map((field) => [field.name, options[field.name] || defaults[field.name] || '']));
+        if (!PIPELINE_NAMES.includes(v.pipeline)) v.pipeline = '';  // blind (or defaults not loaded): unknown
         return v;
       }
+      fetch('/api/call-defaults').then((r) => r.json()).then((d) => {
+        defaults = d;
+        for (const name of ['pipeline', 'stt_provider']) {
+          document.querySelector(`[name=${name}] option[value=""]`).textContent += ` (${d[name]})`;
+        }
+        refresh();
+      }).catch(() => { /* every option stays on */ });
       fields.forEach((field) => {
         const rule = RULES[field.name];
         if (!rule) return;
@@ -258,7 +267,7 @@
         });
         document.getElementById('fit').textContent = v.pipeline
           ? `Pipeline ${v.pipeline}: ${active}/${Object.keys(RULES).length} tuỳ chọn bên dưới có tác dụng, các ô mờ thì bị bỏ qua.`
-          : 'Chưa biết pipeline (mặc định của máy chủ hoặc nghe mù): các ô đều bật; nhãn "dùng cho" cho biết ô nào của pipeline nào.';
+          : 'Chưa biết pipeline nào sẽ chạy (nghe mù): ô nào còn sáng là có pipeline dùng nó; nhãn "dùng cho" cho biết pipeline nào.';
       }
       refresh();
       // client.js reads window.callOptions when the call starts; the capture listener runs before its own click handler.

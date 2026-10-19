@@ -132,6 +132,10 @@ def setup_api(app, db, config, public_dir, upstream):
     async def get_settings(request):
         return json_response(current_settings())
 
+    async def call_defaults(request):
+        """What the test page's "server default" choices resolve to, so it can tell which options matter."""
+        return json_response({key: getattr(config, key) for key in ('pipeline', 'stt_provider', 'vad_type')})
+
     async def put_settings(request):
         body = await read_json(request)
         if not isinstance(body, dict):
@@ -221,6 +225,7 @@ def setup_api(app, db, config, public_dir, upstream):
     app.router.add_get('/api/stats', get_stats)
     app.router.add_get('/api/settings', get_settings)
     app.router.add_put('/api/settings', put_settings)
+    app.router.add_get('/api/call-defaults', call_defaults)
     app.router.add_post('/api/blocked', check_blocked)
     app.router.add_get('/api/voices', list_voices)
     app.router.add_post('/api/voices/clone', clone_voice)

@@ -160,6 +160,12 @@ async def test_settings_start_from_the_defaults(client):
     )
 
 
+async def test_the_test_page_can_ask_what_the_server_default_pipeline_is(client):
+    defaults = await (await client.get('/api/call-defaults')).json()
+
+    assert defaults == {'pipeline': 'classic', 'stt_provider': 'openai', 'vad_type': 'server_vad'}
+
+
 async def test_saved_settings_are_returned_and_blank_restores_the_default(client):
     saved = await client.put('/api/settings', json={'owner_name': '  anh Tuấn ', 'greeting': 'Alo, Tuấn nghe.'})
     assert saved.status == 200
